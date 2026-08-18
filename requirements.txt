@@ -1,0 +1,6 @@
+streamlit
+kubernetes
+pyyaml
+pandas
+openpyxl
+paramiko
