@@ -28,7 +28,7 @@ st.markdown(
        ======================================================== */
 
     [data-testid="stSidebar"] {
-        background: #f7faff;
+        background-color: #f7faff;
         border-right: 1px solid #dbe5f3;
     }
 
@@ -41,21 +41,17 @@ st.markdown(
        SIDEBAR BRAND
        ======================================================== */
 
-    .sidebar-brand {
-        padding: 8px 12px 20px 12px;
-    }
-
     .sidebar-brand-title {
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 700;
         color: #17345f;
+        margin-bottom: 3px;
     }
 
     .sidebar-brand-subtitle {
         font-size: 10px;
         color: #7890b5;
-        letter-spacing: 1.2px;
-        margin-top: 3px;
+        letter-spacing: 1.5px;
     }
 
 
@@ -68,7 +64,8 @@ st.markdown(
         font-weight: 700;
         color: #7890b5;
         letter-spacing: 2px;
-        margin: 10px 12px 8px 12px;
+        margin-top: 20px;
+        margin-bottom: 10px;
         padding-bottom: 8px;
         border-bottom: 1px solid #dbe5f3;
     }
@@ -80,71 +77,245 @@ st.markdown(
 
     [data-testid="stSidebar"] .stButton > button {
         width: 100%;
-        text-align: left;
+        min-height: 44px;
 
         border: 1px solid #d6deea;
-        background: #ffffff;
-        color: #18345e;
-
         border-radius: 8px;
-        margin-bottom: 8px;
 
-        min-height: 44px;
+        background-color: #ffffff;
+        color: #18345e;
 
         font-size: 14px;
         font-weight: 600;
 
-        transition: all 0.15s ease;
+        margin-bottom: 7px;
     }
-
 
     [data-testid="stSidebar"] .stButton > button:hover {
         border-color: #9ab8e8;
-        background: #eef5ff;
+        background-color: #eef5ff;
         color: #0f4da8;
     }
 
 
     /* ========================================================
-       MAIN PAGE
+       MAIN CONTENT
        ======================================================== */
 
-    .page-title {
+    .main-title {
         font-size: 36px;
         font-weight: 700;
         color: #18213d;
     }
 
-    .page-subtitle {
+    .main-subtitle {
         font-size: 16px;
         color: #667085;
-        margin-bottom: 24px;
+        margin-bottom: 25px;
     }
 
-
     /* ========================================================
-       ERROR BOX
+       SI-PLATFORM HOME VISUAL THEME
+       Light blue / white background matching the home artwork
        ======================================================== */
 
-    .module-error {
-        padding: 20px;
+    [data-testid="stAppViewContainer"] {
+        background:
+            radial-gradient(circle at 52% 14%, rgba(66, 132, 255, 0.075), transparent 31%),
+            linear-gradient(135deg, #f7fbff 0%, #ffffff 52%, #f4f8ff 100%);
+    }
+
+    [data-testid="stMain"] {
+        background:
+            radial-gradient(circle at 50% 16%, rgba(62, 128, 255, 0.045), transparent 34%);
+    }
+
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #f8fbff 0%, #f2f7ff 100%);
+        border-right: 1px solid #dce7f5;
+        box-shadow: 4px 0 18px rgba(26, 82, 155, 0.035);
+    }
+
+    [data-testid="stSidebar"] .block-container {
+        padding: 0.85rem 0.65rem 1rem 0.65rem;
+    }
+
+    .si-sidebar-brand {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 3px 5px 4px 5px;
+    }
+
+    .si-brand-logo {
+        width: 35px;
+        height: 35px;
         border-radius: 10px;
-        border: 1px solid #f1b5b5;
-        background: #fff5f5;
-        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(145deg, #1169f4, #1749bf);
+        color: #ffffff;
+        font-size: 19px;
+        box-shadow: 0 5px 14px rgba(24, 94, 218, 0.22);
+    }
+
+    .si-brand-title {
+        color: #14275a;
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.05;
+    }
+
+    .si-brand-subtitle {
+        color: #7182a0;
+        font-size: 9px;
+        margin-top: 4px;
+        letter-spacing: 0.2px;
+    }
+
+    .si-nav-section {
+        margin: 17px 5px 7px 5px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #e0e8f4;
+        color: #7c8eac;
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
+
+    [data-testid="stSidebar"] .stButton {
+        margin: 0 !important;
+    }
+
+    [data-testid="stSidebar"] .stButton > button {
+        width: 100%;
+        min-height: 37px;
+        margin: 2px 0 !important;
+        padding: 6px 8px !important;
+        border: 1px solid transparent !important;
+        border-radius: 8px !important;
+        background: transparent !important;
+        color: #29466e !important;
+        box-shadow: none !important;
+        text-align: left !important;
+        font-size: 11.5px !important;
+        font-weight: 600 !important;
+        transition: all 0.15s ease;
+    }
+
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background: #eaf3ff !important;
+        border-color: #d5e5fb !important;
+        color: #075ee0 !important;
+    }
+
+    .si-nav-active {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        min-height: 37px;
+        box-sizing: border-box;
+        margin: 2px 0;
+        padding: 6px 8px;
+        border: 1px solid #d8e7fc;
+        border-radius: 8px;
+        background: linear-gradient(90deg, #e9f3ff, #f2f8ff);
+        color: #075ee0;
+        font-size: 11.5px;
+        font-weight: 700;
+        box-shadow: 0 2px 8px rgba(35, 105, 220, 0.06);
     }
 
 
+    /* Compact section dropdowns */
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        border: 0 !important;
+        border-radius: 8px !important;
+        background: transparent !important;
+        margin: 2px 0 !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+        padding: 9px 8px !important;
+        color: #4f6788 !important;
+        font-size: 11px !important;
+        font-weight: 800 !important;
+        letter-spacing: .9px !important;
+        text-transform: uppercase !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+        background: #edf4ff !important;
+        color: #1266df !important;
+        border-radius: 8px !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stExpanderDetails"] {
+        padding: 2px 0 4px 0 !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stExpander"] .stButton > button {
+        justify-content: flex-start !important;
+        text-align: left !important;
+        min-height: 34px !important;
+        padding: 5px 8px 5px 16px !important;
+        white-space: normal !important;
+    }
+
+    .si-sidebar-divider {
+        height: 1px;
+        margin: 12px 5px 3px 5px;
+        background: #e0e8f4;
+    }
+
     /* ========================================================
-       STATUS BOX
+       LEFT-ALIGNED ACTIVITY DROPDOWN NAVIGATION
        ======================================================== */
 
-    .module-status {
-        padding: 15px;
-        border-radius: 8px;
-        background: #eef7ff;
-        border: 1px solid #c9def5;
-        margin-bottom: 15px;
+    [data-testid="stSidebar"] .stButton > button {
+        justify-content: flex-start !important;
+        text-align: left !important;
+        white-space: normal !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="column"] .stButton > button {
+        min-height: 34px !important;
+        padding: 5px 6px !important;
+    }
+
+    /* Arrow column */
+    [data-testid="stSidebar"] [data-testid="column"]:first-child
+    .stButton > button {
+        color: #6f86a6 !important;
+        font-size: 17px !important;
+        font-weight: 700 !important;
+        text-align: center !important;
+        justify-content: center !important;
+        padding: 0 !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="column"]:first-child
+    .stButton > button:hover {
+        background: #eaf3ff !important;
+        color: #1266df !important;
+    }
+
+    /* Activity children */
+    [data-testid="stSidebar"] .stButton > button {
+        line-height: 1.2 !important;
+    }
+
+    /* Give activity items a subtle indented appearance. */
+    [data-testid="stSidebar"] .stButton > button:hover {
+        border-color: #d7e6fa !important;
+    }
+
+    .block-container {
+        padding-top: 0.85rem !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
     }
 
     </style>
@@ -158,13 +329,6 @@ st.markdown(
 # ============================================================
 
 def load_function(module_name, function_name):
-    """
-    Safely import/reload a module and return the requested function.
-
-    Returns:
-        (function, None) if successful
-        (None, error_message) if unsuccessful
-    """
 
     try:
 
@@ -184,21 +348,15 @@ def load_function(module_name, function_name):
                 module_name
             )
 
-
         # ----------------------------------------------------
-        # Get requested function
+        # Get function
         # ----------------------------------------------------
 
         function = getattr(
             module,
             function_name,
-            None,
+            None
         )
-
-
-        # ----------------------------------------------------
-        # Function not found
-        # ----------------------------------------------------
 
         if function is None:
 
@@ -206,14 +364,10 @@ def load_function(module_name, function_name):
                 None,
                 (
                     f"Function '{function_name}' "
-                    f"was not found in '{module_name}.py'."
-                ),
+                    f"was not found in "
+                    f"'{module_name}.py'."
+                )
             )
-
-
-        # ----------------------------------------------------
-        # Verify callable
-        # ----------------------------------------------------
 
         if not callable(function):
 
@@ -221,121 +375,102 @@ def load_function(module_name, function_name):
                 None,
                 (
                     f"'{function_name}' exists in "
-                    f"'{module_name}.py' but is not callable."
-                ),
+                    f"'{module_name}.py' "
+                    f"but is not callable."
+                )
             )
 
-
         return function, None
-
 
     except Exception as exc:
 
         return (
             None,
-            f"{type(exc).__name__}: {exc}",
+            f"{type(exc).__name__}: {exc}"
         )
 
 
 # ============================================================
-# LOAD APPLICATION MODULES
+# LOAD MODULES
 # ============================================================
 
 render_home, home_error = load_function(
     "home",
-    "render_home",
+    "render_home"
+)
+
+
+render_workload_comparator, workload_error = load_function(
+    "workload_comparator",
+    "render_workload_comparator"
+)
+
+
+render_image_comparator, image_error = load_function(
+    "image_comparator",
+    "render_image_comparator"
+)
+
+
+render_yaml_comparator, yaml_error = load_function(
+    "yaml_comparator",
+    "render_yaml_comparator"
 )
 
 
 # ============================================================
-# WORKLOAD COMPARATOR
+# ENVIRONMENT COMPARATOR
 # ============================================================
 
-render_workload_comparator, workload_error = (
-    load_function(
-        "workload_comparator",
-        "render_workload_comparator",
-    )
+render_environment_comparator, environment_error = load_function(
+    "environment_comparator",
+    "render_environment_comparator"
 )
 
 
 # ============================================================
-# IMAGE COMPARATOR
+# CLUSTER COMPARISON REPORT
 # ============================================================
 
-render_image_comparator, image_error = (
-    load_function(
-        "image_comparator",
-        "render_image_comparator",
-    )
+render_cluster_comparison_report, report_error = load_function(
+    "cluster_comparison_report",
+    "render_cluster_comparison_report"
 )
 
 
-# ============================================================
-# DOCKER IMAGE SEARCH
-# ============================================================
-
-render_docker_image_load, docker_error = (
-    load_function(
-        "docker_image_load",
-        "render_docker_image_load",
-    )
+render_docker_image_load, docker_error = load_function(
+    "docker_image_load",
+    "render_docker_image_load"
 )
 
-
-# ============================================================
-# DB STRING
-# ============================================================
 
 render_db_string, db_error = load_function(
     "db_string",
-    "render_db_string",
+    "render_db_string"
 )
 
-
-# ============================================================
-# INGRESS
-# ============================================================
 
 render_ingress, ingress_error = load_function(
     "ingress",
-    "render_ingress",
+    "render_ingress"
 )
 
 
-# ============================================================
-# CONTAINER STATUS
-# ============================================================
-
-render_container_status, container_error = (
-    load_function(
-        "container_status",
-        "render_container_status",
-    )
+render_container_status, container_error = load_function(
+    "container_status",
+    "render_container_status"
 )
 
 
-# ============================================================
-# NAMESPACE BACKUP
-# ============================================================
-
-render_namespace_backup, backup_error = (
-    load_function(
-        "namespace_backup",
-        "render_namespace_backup",
-    )
+render_namespace_backup, backup_error = load_function(
+    "namespace_backup",
+    "render_namespace_backup"
 )
 
 
-# ============================================================
-# VM CONNECTIVITY
-# ============================================================
-
-render_vm_connectivity, vm_error = (
-    load_function(
-        "vm_connectivity",
-        "render_vm_connectivity",
-    )
+render_vm_connectivity, vm_error = load_function(
+    "vm_connectivity",
+    "render_vm_connectivity"
 )
 
 
@@ -344,6 +479,7 @@ render_vm_connectivity, vm_error = (
 # ============================================================
 
 if "page" not in st.session_state:
+
     st.session_state.page = "Home"
 
 
@@ -357,176 +493,137 @@ with st.sidebar:
     # BRAND
     # ========================================================
 
-    st.html(
+    st.markdown(
         """
-        <div class="sidebar-brand">
-
-            <div class="sidebar-brand-title">
-                ☰ &nbsp; SI-PLATFORM
+        <div class="si-sidebar-brand">
+            <div class="si-brand-logo">☸</div>
+            <div>
+                <div class="si-brand-title">SI-PLATFORM</div>
+                <div class="si-brand-subtitle">K8s Automation Suite</div>
             </div>
-
-            <div class="sidebar-brand-subtitle">
-                AUTOMATION & VALIDATION SUITE
-            </div>
-
         </div>
-        """
+        """,
+        unsafe_allow_html=True,
     )
 
+    def sidebar_nav(label, page, key):
+        """Existing page routing with compact left-aligned navigation."""
+        if st.session_state.page == page:
+            st.markdown(
+                f'<div class="si-nav-active">{label}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            if st.button(
+                label,
+                key=key,
+                use_container_width=True,
+            ):
+                st.session_state.page = page
+                st.rerun()
 
     # ========================================================
-    # OPERATIONS
+    # VALIDATION & COMPARISON
+    # Keep these visible because they are the primary modules.
     # ========================================================
 
-    st.html(
-        """
-        <div class="sidebar-section">
-            OPERATIONS
-        </div>
-        """
+    st.markdown(
+        '<div class="si-nav-section">Validation &amp; Comparison</div>',
+        unsafe_allow_html=True,
     )
 
+    sidebar_nav("⌂  Home", "Home", "nav_home")
 
-    # ========================================================
-    # HOME
-    # ========================================================
-
-    if st.button(
-        "🏠  Home",
-        key="sidebar_home",
-        use_container_width=True,
-    ):
-
-        st.session_state.page = "Home"
-        st.rerun()
-
-
-    # ========================================================
-    # WORKLOAD COMPARATOR
-    # ========================================================
-
-    if st.button(
-        "☸️  Workload Comparator",
-        key="sidebar_workload",
-        use_container_width=True,
-    ):
-
-        st.session_state.page = "Workload Comparator"
-        st.rerun()
-
-
-    # ========================================================
-    # IMAGE COMPARATOR
-    # ========================================================
-
-    if st.button(
-        "🐳  Image Comparator",
-        key="sidebar_image_comparator",
-        use_container_width=True,
-    ):
-
-        st.session_state.page = "Image Comparator"
-        st.rerun()
-
-
-    # ========================================================
-    # DOCKER IMAGE SEARCH
-    # ========================================================
-
-    if st.button(
-        "🐳  Docker Image Search",
-        key="sidebar_docker",
-        use_container_width=True,
-    ):
-
-        st.session_state.page = "Docker Image Load"
-        st.rerun()
-
-
-    # ========================================================
-    # DB STRING
-    # ========================================================
-
-    if st.button(
-        "🔗  DB String",
-        key="sidebar_db_string",
-        use_container_width=True,
-    ):
-
-        st.session_state.page = "DB String"
-        st.rerun()
-
-
-    # ========================================================
-    # INGRESS
-    # ========================================================
-
-    if st.button(
-        "🌐  Ingress",
-        key="sidebar_ingress",
-        use_container_width=True,
-    ):
-
-        st.session_state.page = "Ingress"
-        st.rerun()
-
-
-    # ========================================================
-    # CONTAINER STATUS
-    # ========================================================
-
-    if st.button(
-        "🚦  Container Status",
-        key="sidebar_container_status",
-        use_container_width=True,
-    ):
-
-        st.session_state.page = "Container Status"
-        st.rerun()
-
-
-    # ========================================================
-    # NAMESPACE BACKUP
-    # ========================================================
-
-    if st.button(
-        "💾  Namespace Backup",
-        key="sidebar_namespace_backup",
-        use_container_width=True,
-    ):
-
-        st.session_state.page = "Namespace Backup"
-        st.rerun()
-
-
-    # ========================================================
-    # VM CONNECTIVITY
-    # ========================================================
-
-    if st.button(
-        "🔗  VM Connectivity",
-        key="sidebar_vm_connectivity",
-        use_container_width=True,
-    ):
-
-        st.session_state.page = "VM Connectivity"
-        st.rerun()
-
-
-    # ========================================================
-    # CONFIGURATION
-    # ========================================================
-
-    st.html(
-        """
-        <div class="sidebar-section">
-            CONFIGURATION
-        </div>
-        """
+    sidebar_nav(
+        "⚖  Environment Comparator",
+        "Environment Comparator",
+        "nav_environment",
     )
 
-    st.caption(
-        "Additional modules can be added here."
+    sidebar_nav(
+        "◇  Workload Comparator",
+        "Workload Comparator",
+        "nav_workload",
+    )
+
+    sidebar_nav(
+        "▣  Image Comparator",
+        "Image Comparator",
+        "nav_image",
+    )
+
+    sidebar_nav(
+        "📄  YAML Comparator",
+        "YAML Comparator",
+        "nav_yaml",
+    )
+
+    # ========================================================
+    # MONITORING & DIAGNOSTICS
+    # Only the SECTION is collapsible.
+    # ========================================================
+
+    with st.expander("🔎  Monitoring & Diagnostics", expanded=False):
+
+        sidebar_nav(
+            "◎  Ingress Connectivity",
+            "Ingress",
+            "nav_ingress",
+        )
+
+        sidebar_nav(
+            "⚙  Container Status",
+            "Container Status",
+            "nav_container_status",
+        )
+
+        sidebar_nav(
+            "⌁  VM Connectivity",
+            "VM Connectivity",
+            "nav_vm_connectivity",
+        )
+
+        sidebar_nav(
+            "🐳  Docker Image Search",
+            "Docker Image Load",
+            "nav_docker",
+        )
+
+    # ========================================================
+    # BACKUP & OPERATIONS
+    # Only the SECTION is collapsible.
+    # ========================================================
+
+    with st.expander("💾  Backup & Operations", expanded=False):
+
+        sidebar_nav(
+            "⇩  Namespace Backup",
+            "Namespace Backup",
+            "nav_namespace_backup",
+        )
+
+        sidebar_nav(
+            "⌘  DB String",
+            "DB String",
+            "nav_db_string",
+        )
+
+    # ========================================================
+    # REPORTS
+    # Only the SECTION is collapsible.
+    # ========================================================
+
+    with st.expander("📊  Reports", expanded=False):
+
+        sidebar_nav(
+            "▣  Cluster Comparison Report",
+            "Cluster Comparison Report",
+            "nav_cluster_report",
+        )
+
+    st.markdown(
+        '<div class="si-sidebar-divider"></div>',
+        unsafe_allow_html=True,
     )
 
 
@@ -551,10 +648,8 @@ if st.session_state.page == "Home":
             "Home module cannot be loaded."
         )
 
-        st.code(
-            home_error or
-            "Unknown home module error."
-        )
+        if home_error:
+            st.code(home_error)
 
 
 # ============================================================
@@ -573,14 +668,11 @@ elif st.session_state.page == "Workload Comparator":
             "Workload Comparator cannot be loaded."
         )
 
-        st.code(
-            workload_error or
-            "Unknown workload_comparator error."
-        )
+        if workload_error:
+            st.code(workload_error)
 
         st.info(
-            "Check workload_comparator.py. "
-            "It must contain:"
+            "Make sure workload_comparator.py contains:"
         )
 
         st.code(
@@ -591,7 +683,7 @@ def render_workload_comparator():
 
     pass
             """,
-            language="python",
+            language="python"
         )
 
 
@@ -611,14 +703,11 @@ elif st.session_state.page == "Image Comparator":
             "Image Comparator cannot be loaded."
         )
 
-        st.code(
-            image_error or
-            "Unknown image_comparator error."
-        )
+        if image_error:
+            st.code(image_error)
 
         st.info(
-            "Check image_comparator.py. "
-            "It must contain:"
+            "Make sure image_comparator.py contains:"
         )
 
         st.code(
@@ -629,12 +718,117 @@ def render_image_comparator():
 
     pass
             """,
-            language="python",
+            language="python"
         )
 
 
 # ============================================================
-# DOCKER IMAGE LOAD
+# YAML COMPARATOR
+# ============================================================
+
+elif st.session_state.page == "YAML Comparator":
+
+    if render_yaml_comparator:
+
+        render_yaml_comparator()
+
+    else:
+
+        st.error(
+            "YAML Comparator cannot be loaded."
+        )
+
+        if yaml_error:
+            st.code(yaml_error)
+
+        st.info(
+            "Make sure yaml_comparator.py contains:"
+        )
+
+        st.code(
+            """
+def render_yaml_comparator():
+
+    # Kubernetes YAML Comparator code
+
+    pass
+            """,
+            language="python"
+        )
+
+
+# ============================================================
+# ENVIRONMENT COMPARATOR
+# ============================================================
+
+elif st.session_state.page == "Environment Comparator":
+
+    if render_environment_comparator:
+
+        render_environment_comparator()
+
+    else:
+
+        st.error(
+            "Environment Comparator cannot be loaded."
+        )
+
+        if environment_error:
+            st.code(environment_error)
+
+        st.info(
+            "Make sure environment_comparator.py contains:"
+        )
+
+        st.code(
+            """
+def render_environment_comparator():
+
+    # UAT → PROD environment comparison and sync code
+
+    pass
+            """,
+            language="python"
+        )
+
+
+# ============================================================
+# CLUSTER COMPARISON REPORT
+# ============================================================
+
+elif st.session_state.page == "Cluster Comparison Report":
+
+    if render_cluster_comparison_report:
+
+        render_cluster_comparison_report()
+
+    else:
+
+        st.error(
+            "Cluster Comparison Report cannot be loaded."
+        )
+
+        if report_error:
+            st.code(report_error)
+
+        st.info(
+            "Make sure cluster_comparison_report.py contains:"
+        )
+
+        st.code(
+            """
+def render_cluster_comparison_report():
+
+    # Cluster Comparison Report code
+
+    pass
+            """,
+            language="python"
+        )
+
+
+# ============================================================
+# DOCKER IMAGE SEARCH
 # ============================================================
 
 elif st.session_state.page == "Docker Image Load":
@@ -646,13 +840,11 @@ elif st.session_state.page == "Docker Image Load":
     else:
 
         st.error(
-            "Docker Image module cannot be loaded."
+            "Docker Image Search module cannot be loaded."
         )
 
-        st.code(
-            docker_error or
-            "Unknown docker_image_load error."
-        )
+        if docker_error:
+            st.code(docker_error)
 
 
 # ============================================================
@@ -671,10 +863,8 @@ elif st.session_state.page == "DB String":
             "DB String module cannot be loaded."
         )
 
-        st.code(
-            db_error or
-            "Unknown db_string error."
-        )
+        if db_error:
+            st.code(db_error)
 
 
 # ============================================================
@@ -693,10 +883,8 @@ elif st.session_state.page == "Ingress":
             "Ingress module cannot be loaded."
         )
 
-        st.code(
-            ingress_error or
-            "Unknown ingress error."
-        )
+        if ingress_error:
+            st.code(ingress_error)
 
 
 # ============================================================
@@ -715,10 +903,8 @@ elif st.session_state.page == "Container Status":
             "Container Status module cannot be loaded."
         )
 
-        st.code(
-            container_error or
-            "Unknown container_status error."
-        )
+        if container_error:
+            st.code(container_error)
 
 
 # ============================================================
@@ -737,10 +923,8 @@ elif st.session_state.page == "Namespace Backup":
             "Namespace Backup module cannot be loaded."
         )
 
-        st.code(
-            backup_error or
-            "Unknown namespace_backup error."
-        )
+        if backup_error:
+            st.code(backup_error)
 
 
 # ============================================================
@@ -759,10 +943,8 @@ elif st.session_state.page == "VM Connectivity":
             "VM Connectivity module cannot be loaded."
         )
 
-        st.code(
-            vm_error or
-            "Unknown vm_connectivity error."
-        )
+        if vm_error:
+            st.code(vm_error)
 
 
 # ============================================================

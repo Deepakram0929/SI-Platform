@@ -1,0 +1,2881 @@
+import base64
+import html
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import pandas as pd
+import streamlit as st
+import yaml
+
+from kubernetes import client
+from kubernetes import config as kube_config
+
+
+# ============================================================
+# PAGE CONFIG
+# ============================================================
+
+st.set_page_config(
+    page_title="Environment Comparator",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+# ============================================================
+# CONSTANTS
+# ============================================================
+
+ENVIRONMENTS = [
+    "UAT",
+    "BLUE",
+    "DEV",
+    "Green",
+    "STAGING",
+    "Prod",
+]
+
+RESOURCE_TYPES = [
+    "ConfigMap",
+    "Secret",
+    "Deployment",
+    "StatefulSet",
+]
+
+# Kubernetes API request timeout in seconds.
+# Parallel source/destination scans prevent one healthy cluster from
+# waiting unnecessarily for the other cluster's response.
+# Keeping this configurable avoids long waits when an API endpoint is unhealthy.
+KUBE_API_TIMEOUT = 30
+
+
+# ============================================================
+# CSS
+# ============================================================
+
+def load_css():
+
+    st.markdown(
+        """
+        <style>
+
+        .env-title {
+            font-size: 30px;
+            font-weight: 700;
+            color: #17345f;
+        }
+
+        .env-subtitle {
+            font-size: 14px;
+            color: #5f7698;
+            margin-bottom: 25px;
+        }
+
+        .transfer-box {
+            background: #f1f6ff;
+            border: 1px solid #a9c9ff;
+            border-radius: 9px;
+            padding: 16px;
+            margin-top: 15px;
+            margin-bottom: 20px;
+        }
+
+        .cluster-source {
+            background: #f1fff6;
+            border: 1px solid #9be5b5;
+            border-radius: 9px;
+            padding: 16px;
+        }
+
+        .cluster-destination {
+            background: #fff4f5;
+            border: 1px solid #f0aab3;
+            border-radius: 9px;
+            padding: 16px;
+        }
+
+        .key-box {
+            background: #f6f8fb;
+            border-radius: 6px;
+            padding: 10px;
+            min-height: 38px;
+            word-break: break-word;
+        }
+
+        .source-value {
+            background: #fff4e8;
+            border-left: 3px solid #ff7900;
+            border-radius: 5px;
+            padding: 10px;
+            min-height: 38px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .destination-value {
+            background: #edf4ff;
+            border-left: 3px solid #377dff;
+            border-radius: 5px;
+            padding: 10px;
+            min-height: 38px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .same {
+            color: #138a3d;
+            font-weight: 700;
+        }
+
+        .diff {
+            color: #d95b00;
+            font-weight: 700;
+        }
+
+        .empty {
+            color: #777777;
+            font-weight: 700;
+        }
+
+        .missing {
+            color: #b46a00;
+            font-weight: 700;
+        }
+
+        .destination-only {
+            color: #3867a8;
+            font-weight: 700;
+        }
+
+        .resource-card {
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# SESSION STATE
+# ============================================================
+
+def initialize_state():
+
+    defaults = {
+        "ec_source_api": None,
+        "ec_destination_api": None,
+
+        "ec_source_version": "",
+        "ec_destination_version": "",
+
+        "ec_namespaces": [],
+
+        "ec_results": None,
+
+        "ec_source_env": "BLUE",
+        "ec_destination_env": "Green",
+
+        "ec_confirm": False,
+
+        "ec_source_resources": {},
+        "ec_destination_resources": {},
+    }
+
+    for key, value in defaults.items():
+
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+# ============================================================
+# COMMON HELPERS
+# ============================================================
+
+def normalize_value(value):
+
+    if value is None:
+        return ""
+
+    return str(value)
+
+
+def is_empty(value):
+
+    return normalize_value(value).strip() == ""
+
+
+def safe_text(value):
+
+    return html.escape(
+        normalize_value(value)
+    )
+
+
+def yaml_text(value):
+
+    try:
+        return yaml.safe_dump(
+            value,
+            sort_keys=True,
+            default_flow_style=False,
+        ).strip()
+    except Exception:
+        return normalize_value(value)
+
+
+def status_css(status):
+
+    return {
+        "SAME": "same",
+        "DIFF": "diff",
+        "EMPTY": "empty",
+        "MISSING": "missing",
+        "DESTINATION_ONLY": "destination-only",
+    }.get(
+        status,
+        "diff",
+    )
+
+
+def render_status(status):
+
+    css = status_css(status)
+
+    label = status.replace(
+        "_",
+        " ",
+    )
+
+    st.markdown(
+        f'<span class="{css}">{safe_text(label)}</span>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_value_box(
+    value,
+    box_class,
+):
+
+    st.markdown(
+        f"""
+        <div class="{box_class}">
+            {safe_text(value)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# KUBECONFIG
+# ============================================================
+
+def load_kubeconfig(uploaded_file):
+
+    if uploaded_file is None:
+        raise ValueError(
+            "Kubeconfig file was not uploaded."
+        )
+
+    raw = uploaded_file.getvalue()
+
+    if not raw:
+        raise ValueError(
+            "Uploaded kubeconfig is empty."
+        )
+
+    try:
+
+        data = yaml.safe_load(
+            raw.decode("utf-8")
+        )
+
+    except Exception as exc:
+
+        raise ValueError(
+            f"Invalid kubeconfig YAML: {exc}"
+        )
+
+    if not isinstance(data, dict):
+
+        raise ValueError(
+            "Invalid kubeconfig structure."
+        )
+
+    return data
+
+
+def create_kubernetes_api(
+    kubeconfig_data,
+):
+
+    api_client = (
+        kube_config.new_client_from_config_dict(
+            kubeconfig_data
+        )
+    )
+
+    core_api = client.CoreV1Api(
+        api_client
+    )
+
+    version_api = client.VersionApi(
+        api_client
+    )
+
+    apps_api = client.AppsV1Api(
+        api_client
+    )
+
+    return (
+        core_api,
+        version_api,
+        apps_api,
+    )
+
+
+def get_cluster_version(
+    version_api,
+):
+
+    try:
+
+        result = version_api.get_code()
+
+        return getattr(
+            result,
+            "git_version",
+            "Unknown",
+        )
+
+    except Exception:
+
+        return "Unknown"
+
+
+# ============================================================
+# NAMESPACE
+# ============================================================
+
+def get_namespaces(api):
+
+    response = api.list_namespace(
+        _request_timeout=KUBE_API_TIMEOUT
+    )
+
+    names = []
+
+    for item in response.items or []:
+
+        if (
+            item.metadata
+            and item.metadata.name
+        ):
+
+            names.append(
+                item.metadata.name
+            )
+
+    return sorted(
+        set(names),
+        key=str.lower,
+    )
+
+
+# ============================================================
+# CONFIGMAP
+# ============================================================
+
+def get_all_configmaps(
+    api,
+    namespace,
+):
+
+    configmaps = {}
+
+    continue_token = None
+
+    while True:
+
+        kwargs = {
+            "namespace": namespace,
+            "_request_timeout": KUBE_API_TIMEOUT,
+        }
+
+        if continue_token:
+
+            kwargs["_continue"] = (
+                continue_token
+            )
+
+        response = (
+            api.list_namespaced_config_map(
+                **kwargs
+            )
+        )
+
+        for item in response.items or []:
+
+            if (
+                not item.metadata
+                or not item.metadata.name
+            ):
+                continue
+
+            name = item.metadata.name
+
+            data = {}
+
+            if item.data:
+
+                for key, value in (
+                    item.data.items()
+                ):
+
+                    data[
+                        str(key)
+                    ] = normalize_value(
+                        value
+                    )
+
+            if getattr(
+                item,
+                "binary_data",
+                None,
+            ):
+
+                for key, value in (
+                    item.binary_data.items()
+                ):
+
+                    key = str(key)
+
+                    if key not in data:
+
+                        data[key] = (
+                            normalize_value(
+                                value
+                            )
+                        )
+
+            configmaps[name] = data
+
+        continue_token = getattr(
+            response.metadata,
+            "_continue",
+            None,
+        )
+
+        if not continue_token:
+            break
+
+    return configmaps
+
+
+# ============================================================
+# SECRET
+# ============================================================
+
+def decode_secret_value(
+    value,
+):
+
+    if value is None:
+        return ""
+
+    try:
+
+        if isinstance(
+            value,
+            bytes,
+        ):
+
+            decoded = base64.b64decode(
+                value
+            )
+
+        else:
+
+            decoded = base64.b64decode(
+                str(value)
+            )
+
+        return decoded.decode(
+            "utf-8"
+        )
+
+    except Exception:
+
+        return normalize_value(
+            value
+        )
+
+
+def get_all_secrets(
+    api,
+    namespace,
+):
+
+    secrets = {}
+
+    continue_token = None
+
+    while True:
+
+        kwargs = {
+            "namespace": namespace,
+            "_request_timeout": KUBE_API_TIMEOUT,
+        }
+
+        if continue_token:
+
+            kwargs["_continue"] = (
+                continue_token
+            )
+
+        response = (
+            api.list_namespaced_secret(
+                **kwargs
+            )
+        )
+
+        for item in response.items or []:
+
+            if (
+                not item.metadata
+                or not item.metadata.name
+            ):
+                continue
+
+            name = item.metadata.name
+
+            data = {}
+
+            for key, value in (
+                (item.data or {}).items()
+            ):
+
+                data[
+                    str(key)
+                ] = decode_secret_value(
+                    value
+                )
+
+            secrets[name] = data
+
+        continue_token = getattr(
+            response.metadata,
+            "_continue",
+            None,
+        )
+
+        if not continue_token:
+            break
+
+    return secrets
+
+
+# ============================================================
+# DEPLOYMENT
+# ============================================================
+
+def workload_to_fields(
+    workload,
+):
+
+    fields = {}
+
+    spec = workload.spec
+
+    if spec is None:
+        return fields
+
+    fields[
+        "spec.replicas"
+    ] = normalize_value(
+        getattr(
+            spec,
+            "replicas",
+            "",
+        )
+    )
+
+    fields[
+        "spec.strategy"
+    ] = yaml_text(
+        getattr(
+            spec,
+            "strategy",
+            None,
+        ).to_dict()
+        if getattr(
+            spec,
+            "strategy",
+            None,
+        )
+        else {}
+    )
+
+    template = getattr(
+        spec,
+        "template",
+        None,
+    )
+
+    if template is None:
+        return fields
+
+    metadata = getattr(
+        template,
+        "metadata",
+        None,
+    )
+
+    if metadata:
+
+        fields[
+            "spec.template.metadata.labels"
+        ] = yaml_text(
+            getattr(
+                metadata,
+                "labels",
+                None,
+            )
+            or {}
+        )
+
+        fields[
+            "spec.template.metadata.annotations"
+        ] = yaml_text(
+            getattr(
+                metadata,
+                "annotations",
+                None,
+            )
+            or {}
+        )
+
+    pod_spec = getattr(
+        template,
+        "spec",
+        None,
+    )
+
+    if pod_spec is None:
+        return fields
+
+    fields[
+        "spec.template.spec.serviceAccountName"
+    ] = normalize_value(
+        getattr(
+            pod_spec,
+            "service_account_name",
+            "",
+        )
+    )
+
+    fields[
+        "spec.template.spec.nodeSelector"
+    ] = yaml_text(
+        getattr(
+            pod_spec,
+            "node_selector",
+            None,
+        )
+        or {}
+    )
+
+    fields[
+        "spec.template.spec.tolerations"
+    ] = yaml_text(
+        [
+            item.to_dict()
+            if hasattr(
+                item,
+                "to_dict",
+            )
+            else str(item)
+            for item in (
+                getattr(
+                    pod_spec,
+                    "tolerations",
+                    None,
+                )
+                or []
+            )
+        ]
+    )
+
+    fields[
+        "spec.template.spec.affinity"
+    ] = yaml_text(
+        getattr(
+            pod_spec,
+            "affinity",
+            None,
+        ).to_dict()
+        if getattr(
+            pod_spec,
+            "affinity",
+            None,
+        )
+        else {}
+    )
+
+    containers = (
+        getattr(
+            pod_spec,
+            "containers",
+            None,
+        )
+        or []
+    )
+
+    for container in containers:
+
+        cname = normalize_value(
+            getattr(
+                container,
+                "name",
+                "",
+            )
+        )
+
+        if not cname:
+            continue
+
+        fields[
+            f"container.{cname}.image"
+        ] = normalize_value(
+            getattr(
+                container,
+                "image",
+                "",
+            )
+        )
+
+        fields[
+            f"container.{cname}.imagePullPolicy"
+        ] = normalize_value(
+            getattr(
+                container,
+                "image_pull_policy",
+                "",
+            )
+        )
+
+        env_data = {}
+
+        for env in (
+            getattr(
+                container,
+                "env",
+                None,
+            )
+            or []
+        ):
+
+            env_name = normalize_value(
+                getattr(
+                    env,
+                    "name",
+                    "",
+                )
+            )
+
+            if not env_name:
+                continue
+
+            env_value = getattr(
+                env,
+                "value",
+                None,
+            )
+
+            if env_value is not None:
+
+                env_data[
+                    env_name
+                ] = normalize_value(
+                    env_value
+                )
+
+            else:
+
+                value_from = getattr(
+                    env,
+                    "value_from",
+                    None,
+                )
+
+                if value_from:
+
+                    env_data[
+                        env_name
+                    ] = yaml_text(
+                        value_from.to_dict()
+                        if hasattr(
+                            value_from,
+                            "to_dict",
+                        )
+                        else str(
+                            value_from
+                        )
+                    )
+
+        fields[
+            f"container.{cname}.env"
+        ] = yaml_text(
+            env_data
+        )
+
+        resources = getattr(
+            container,
+            "resources",
+            None,
+        )
+
+        fields[
+            f"container.{cname}.resources"
+        ] = yaml_text(
+            {
+                "limits": (
+                    getattr(
+                        resources,
+                        "limits",
+                        None,
+                    )
+                    or {}
+                ),
+                "requests": (
+                    getattr(
+                        resources,
+                        "requests",
+                        None,
+                    )
+                    or {}
+                ),
+            }
+        )
+
+        fields[
+            f"container.{cname}.ports"
+        ] = yaml_text(
+            [
+                port.to_dict()
+                if hasattr(
+                    port,
+                    "to_dict",
+                )
+                else str(port)
+                for port in (
+                    getattr(
+                        container,
+                        "ports",
+                        None,
+                    )
+                    or []
+                )
+            ]
+        )
+
+    fields[
+        "spec.template.spec.volumes"
+    ] = yaml_text(
+        [
+            volume.to_dict()
+            if hasattr(
+                volume,
+                "to_dict",
+            )
+            else str(volume)
+            for volume in (
+                getattr(
+                    pod_spec,
+                    "volumes",
+                    None,
+                )
+                or []
+            )
+        ]
+    )
+
+    return fields
+
+
+def get_all_workloads(
+    apps_api,
+    namespace,
+    resource_type,
+):
+
+    if resource_type == "Deployment":
+
+        response = (
+            apps_api.list_namespaced_deployment(
+                namespace=namespace,
+                _request_timeout=KUBE_API_TIMEOUT,
+            )
+        )
+
+    elif resource_type == "StatefulSet":
+
+        response = (
+            apps_api.list_namespaced_stateful_set(
+                namespace=namespace,
+                _request_timeout=KUBE_API_TIMEOUT,
+            )
+        )
+
+    else:
+
+        return {}
+
+    result = {}
+
+    for item in response.items or []:
+
+        if (
+            item.metadata
+            and item.metadata.name
+        ):
+
+            result[
+                item.metadata.name
+            ] = workload_to_fields(
+                item
+            )
+
+    return result
+
+
+# ============================================================
+# GENERIC KEY/VALUE COMPARISON
+# ============================================================
+
+def compare_key_value_resources(
+    source_resources,
+    destination_resources,
+):
+
+    source_names = set(
+        source_resources.keys()
+    )
+
+    destination_names = set(
+        destination_resources.keys()
+    )
+
+    all_names = sorted(
+        source_names
+        | destination_names,
+        key=str.lower,
+    )
+
+    summary = {
+        "source_count": len(
+            source_names
+        ),
+        "destination_count": len(
+            destination_names
+        ),
+        "common": len(
+            source_names
+            & destination_names
+        ),
+        "missing": len(
+            source_names
+            - destination_names
+        ),
+        "destination_only": len(
+            destination_names
+            - source_names
+        ),
+        "same": 0,
+        "diff": 0,
+        "empty": 0,
+        "missing_keys": 0,
+        "destination_only_keys": 0,
+    }
+
+    results = []
+
+    for name in all_names:
+
+        source_exists = (
+            name in source_resources
+        )
+
+        destination_exists = (
+            name in destination_resources
+        )
+
+        source_data = (
+            source_resources.get(
+                name,
+                {},
+            )
+        )
+
+        destination_data = (
+            destination_resources.get(
+                name,
+                {},
+            )
+        )
+
+        if (
+            source_exists
+            and not destination_exists
+        ):
+
+            resource_status = (
+                "MISSING"
+            )
+
+        elif (
+            destination_exists
+            and not source_exists
+        ):
+
+            resource_status = (
+                "DESTINATION_ONLY"
+            )
+
+        else:
+
+            resource_status = "NORMAL"
+
+        all_keys = sorted(
+            set(source_data.keys())
+            | set(destination_data.keys()),
+            key=str.lower,
+        )
+
+        fields = []
+
+        for key in all_keys:
+
+            source_key_exists = (
+                key in source_data
+            )
+
+            destination_key_exists = (
+                key in destination_data
+            )
+
+            source_value = normalize_value(
+                source_data.get(
+                    key,
+                    "",
+                )
+            )
+
+            destination_value = normalize_value(
+                destination_data.get(
+                    key,
+                    "",
+                )
+            )
+
+            if (
+                source_key_exists
+                and not destination_key_exists
+            ):
+
+                status = "MISSING"
+
+                summary[
+                    "missing_keys"
+                ] += 1
+
+            elif (
+                destination_key_exists
+                and not source_key_exists
+            ):
+
+                status = (
+                    "DESTINATION_ONLY"
+                )
+
+                summary[
+                    "destination_only_keys"
+                ] += 1
+
+            elif (
+                is_empty(
+                    source_value
+                )
+                and is_empty(
+                    destination_value
+                )
+            ):
+
+                status = "EMPTY"
+
+                summary[
+                    "empty"
+                ] += 1
+
+            elif (
+                source_value
+                == destination_value
+            ):
+
+                status = "SAME"
+
+                summary[
+                    "same"
+                ] += 1
+
+            else:
+
+                status = "DIFF"
+
+                summary[
+                    "diff"
+                ] += 1
+
+            fields.append(
+                {
+                    "key": key,
+                    "source_value": source_value,
+                    "destination_value": destination_value,
+                    "source_exists": source_key_exists,
+                    "destination_exists": destination_key_exists,
+                    "status": status,
+                }
+            )
+
+        results.append(
+            {
+                "name": name,
+                "source_exists": source_exists,
+                "destination_exists": destination_exists,
+                "resource_status": resource_status,
+                "fields": fields,
+            }
+        )
+
+    return (
+        results,
+        summary,
+    )
+
+
+# ============================================================
+# WORKLOAD COMPARISON
+# ============================================================
+
+def compare_workloads(
+    source_resources,
+    destination_resources,
+):
+
+    return compare_key_value_resources(
+        source_resources,
+        destination_resources,
+    )
+
+
+# ============================================================
+# CONFIGMAP UPDATE
+# ============================================================
+
+def patch_configmap(
+    api,
+    namespace,
+    name,
+    source_data,
+    selected_keys,
+):
+
+    patch_data = {}
+
+    for key in selected_keys:
+
+        if key in source_data:
+
+            patch_data[
+                key
+            ] = normalize_value(
+                source_data[key]
+            )
+
+    if not patch_data:
+
+        return (
+            False,
+            "No ConfigMap keys selected.",
+        )
+
+    try:
+
+        api.patch_namespaced_config_map(
+            name=name,
+            namespace=namespace,
+            body={
+                "data": patch_data
+            },
+            _request_timeout=KUBE_API_TIMEOUT,
+        )
+
+        return (
+            True,
+            f"Updated {len(patch_data)} ConfigMap key(s).",
+        )
+
+    except Exception as exc:
+
+        return (
+            False,
+            str(exc),
+        )
+
+
+# ============================================================
+# SECRET UPDATE
+# ============================================================
+
+def patch_secret(
+    api,
+    namespace,
+    name,
+    source_data,
+    selected_keys,
+):
+
+    patch_data = {}
+
+    for key in selected_keys:
+
+        if key not in source_data:
+            continue
+
+        value = normalize_value(
+            source_data[key]
+        )
+
+        patch_data[
+            key
+        ] = base64.b64encode(
+            value.encode("utf-8")
+        ).decode(
+            "ascii"
+        )
+
+    if not patch_data:
+
+        return (
+            False,
+            "No Secret keys selected.",
+        )
+
+    try:
+
+        api.patch_namespaced_secret(
+            name=name,
+            namespace=namespace,
+            body={
+                "data": patch_data
+            },
+            _request_timeout=KUBE_API_TIMEOUT,
+        )
+
+        return (
+            True,
+            f"Updated {len(patch_data)} Secret key(s).",
+        )
+
+    except Exception as exc:
+
+        return (
+            False,
+            str(exc),
+        )
+
+
+# ============================================================
+# RESOURCE HEADER
+# ============================================================
+
+def resource_title(
+    resource_type,
+    namespace,
+    item,
+):
+
+    status = item[
+        "resource_status"
+    ]
+
+    if status == "MISSING":
+
+        icon = "🟡"
+
+    elif status == "DESTINATION_ONLY":
+
+        icon = "🔵"
+
+    else:
+
+        icon = "🟠"
+
+    return (
+        f"{icon} "
+        f"{status.replace('_', ' ')} | "
+        f"{namespace} | "
+        f"{resource_type} | "
+        f"{item['name']} | "
+        f"{len(item['fields'])} field(s)"
+    )
+
+
+def resource_has_actionable_changes(item):
+    """Return True when a resource contains actionable differences."""
+    if item.get("resource_status") in ("MISSING", "DESTINATION_ONLY"):
+        return True
+
+    return any(
+        field.get("status") in (
+            "DIFF",
+            "MISSING",
+            "DESTINATION_ONLY",
+        )
+        for field in item.get("fields", [])
+    )
+
+
+# ============================================================
+# FAST TABLE RENDERING
+# ============================================================
+
+def build_actionable_dataframe(resource_type, results, show_only_differences=True):
+    """Build one compact table instead of hundreds of Streamlit widgets."""
+    rows = []
+
+    for item in results:
+        destination_exists = item.get("destination_exists", False)
+
+        for field in item.get("fields", []):
+            status = field.get("status", "")
+
+            if show_only_differences and status not in (
+                "DIFF",
+                "MISSING",
+                "DESTINATION_ONLY",
+            ):
+                continue
+
+            can_update = (
+                resource_type in ("ConfigMap", "Secret")
+                and destination_exists
+                and status in ("DIFF", "MISSING")
+            )
+
+            rows.append({
+                "Select": False if not can_update else True,
+                "Resource": item["name"],
+                "Key / Field": field["key"],
+                "Source Value": normalize_value(field.get("source_value", "")),
+                "Destination Value": normalize_value(field.get("destination_value", "")),
+                "Status": status,
+                "_can_update": can_update,
+            })
+
+    return rows
+
+
+def render_fast_comparison_table(
+    resource_type,
+    namespace,
+    results,
+    show_only_differences=True,
+    select_all=False,
+):
+    """Render all comparison rows as one Streamlit data editor."""
+    rows = build_actionable_dataframe(
+        resource_type,
+        results,
+        show_only_differences=show_only_differences,
+    )
+
+    if not rows:
+        st.success(f"No differences found for {resource_type} in this namespace.")
+        return None, False
+
+    # Select All is represented by one boolean. Do not create one checkbox per key.
+    if select_all and resource_type in ("ConfigMap", "Secret"):
+        for row in rows:
+            row["Select"] = row["_can_update"]
+
+    df = pd.DataFrame(rows)
+
+    # Internal column is never shown to the user.
+    visible_columns = [
+        "Select",
+        "Resource",
+        "Key / Field",
+        "Source Value",
+        "Destination Value",
+        "Status",
+    ]
+
+    editor_key = (
+        f"ec_fast_editor_{resource_type}_{namespace}"
+    )
+
+    with st.form(key=f"ec_fast_form_{resource_type}_{namespace}"):
+        st.data_editor(
+            df[visible_columns],
+            key=editor_key,
+            hide_index=True,
+            use_container_width=True,
+            num_rows="fixed",
+            height=min(620, max(180, 45 + len(df) * 35)),
+            disabled=[
+                "Resource",
+                "Key / Field",
+                "Source Value",
+                "Destination Value",
+                "Status",
+            ],
+            column_config={
+                "Select": st.column_config.CheckboxColumn(
+                    "Select",
+                    help=(
+                        "Select keys to update in the destination."
+                        if resource_type in ("ConfigMap", "Secret")
+                        else "Workloads are comparison-only."
+                    ),
+                    default=False,
+                ),
+                "Resource": st.column_config.TextColumn(
+                    "Resource", width="medium"
+                ),
+                "Key / Field": st.column_config.TextColumn(
+                    "Key / Field", width="medium"
+                ),
+                "Source Value": st.column_config.TextColumn(
+                    "Source Value", width="large"
+                ),
+                "Destination Value": st.column_config.TextColumn(
+                    "Destination Value", width="large"
+                ),
+                "Status": st.column_config.TextColumn(
+                    "Status", width="small"
+                ),
+            },
+        )
+
+        submitted = st.form_submit_button(
+            "✅ Continue with Selected Changes",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if not submitted:
+        return None, False
+
+    edited = st.session_state.get(editor_key)
+
+    # Streamlit stores the edited data in session state for data_editor.
+    # Handle both DataFrame and dict-like representations for compatibility.
+    if isinstance(edited, dict) and "edited_rows" in edited:
+        edited_df = df[visible_columns].copy()
+        for row_index, changes in edited.get("edited_rows", {}).items():
+            for column, value in changes.items():
+                if column in edited_df.columns and row_index < len(edited_df):
+                    edited_df.at[row_index, column] = value
+    elif isinstance(edited, pd.DataFrame):
+        edited_df = edited.copy()
+    else:
+        # Older Streamlit versions may return the widget data directly.
+        edited_df = df[visible_columns].copy()
+
+    selected = {}
+
+    for index, row in edited_df.iterrows():
+        if not bool(row.get("Select", False)):
+            continue
+
+        resource_name = row["Resource"]
+        key = row["Key / Field"]
+        selected.setdefault(resource_name, []).append(key)
+
+    return selected, True
+
+
+# ============================================================
+# GET SELECTED RESOURCE KEYS
+# ============================================================
+
+def get_selected_keys(
+    resource_type,
+    namespace,
+    results,
+    select_all=False,
+):
+
+    selected = {}
+
+    # Fast path for Select All: resolve the selection directly from the
+    # comparison result instead of reading hundreds of checkbox states.
+    if select_all and resource_type in (
+        "ConfigMap",
+        "Secret",
+    ):
+        for item in results:
+            if not item.get("destination_exists"):
+                continue
+
+            keys = [
+                field["key"]
+                for field in item.get("fields", [])
+                if field.get("status") in (
+                    "DIFF",
+                    "MISSING",
+                )
+            ]
+
+            if keys:
+                selected[item["name"]] = keys
+
+        return selected
+
+    if resource_type not in (
+        "ConfigMap",
+        "Secret",
+    ):
+
+        return selected
+
+    for item in results:
+
+        if not item[
+            "destination_exists"
+        ]:
+
+            continue
+
+        name = item[
+            "name"
+        ]
+
+        for index, field in enumerate(
+            item["fields"]
+        ):
+
+            if field[
+                "status"
+            ] not in (
+                "DIFF",
+                "MISSING",
+            ):
+
+                continue
+
+            checkbox_key = (
+                f"ec_select_"
+                f"{resource_type}_"
+                f"{namespace}_"
+                f"{name}_"
+                f"{index}"
+            )
+
+            if st.session_state.get(
+                checkbox_key,
+                False,
+            ):
+
+                selected.setdefault(
+                    name,
+                    [],
+                ).append(
+                    field["key"]
+                )
+
+    return selected
+
+
+# ============================================================
+# UPDATE SELECTED RESOURCE
+# ============================================================
+
+def update_selected_resource(
+    resource_type,
+    api,
+    namespace,
+    source_resources,
+    selected,
+):
+
+    if not selected:
+        return
+
+    st.markdown("### 🚀 Update Destination")
+
+    total = sum(len(keys) for keys in selected.values())
+
+    st.success(
+        f"{total} {resource_type} key(s) selected for destination update."
+    )
+
+    # Use ONE dataframe for the preview instead of creating many st.code/st.columns
+    # widgets. This is critical when Select All contains hundreds of keys.
+    preview_rows = []
+    for name, keys in selected.items():
+        source_data = source_resources.get(name, {})
+        for key in keys:
+            preview_rows.append({
+                "Resource": name,
+                "Key": key,
+                "Source Value": normalize_value(source_data.get(key, "")),
+            })
+
+    if preview_rows:
+        st.dataframe(
+            pd.DataFrame(preview_rows),
+            hide_index=True,
+            use_container_width=True,
+            height=min(500, max(120, 45 + len(preview_rows) * 35)),
+        )
+
+    confirm_key = f"ec_confirm_{resource_type}"
+    confirm = st.checkbox(
+        f"I confirm that the selected {resource_type} source values should "
+        "be updated in the destination.",
+        key=confirm_key,
+    )
+
+    if not confirm:
+        return
+
+    button_key = f"ec_update_{resource_type}"
+
+    if st.button(
+        f"🚀 Update Selected {resource_type} Keys",
+        type="primary",
+        use_container_width=True,
+        key=button_key,
+    ):
+
+        success = 0
+        failed = 0
+
+        for name, keys in selected.items():
+            source_data = source_resources.get(name, {})
+
+            if resource_type == "ConfigMap":
+                ok, message = patch_configmap(
+                    api, namespace, name, source_data, keys
+                )
+            elif resource_type == "Secret":
+                ok, message = patch_secret(
+                    api, namespace, name, source_data, keys
+                )
+            else:
+                ok = False
+                message = f"{resource_type} updates are disabled."
+
+            if ok:
+                success += 1
+            else:
+                failed += 1
+
+        if failed == 0:
+            st.success(
+                f"All selected {resource_type} values were updated successfully."
+            )
+        else:
+            st.warning(
+                f"Update completed. Successful: {success}. Failed: {failed}."
+            )
+
+
+# ============================================================
+# RESOURCE METRICS
+# ============================================================
+
+def render_summary(
+    resource_type,
+    summary,
+):
+
+    st.markdown(
+        f"### {resource_type} Summary"
+    )
+
+    cols = st.columns(
+        7
+    )
+
+    metrics = [
+        (
+            "SOURCE",
+            summary[
+                "source_count"
+            ],
+        ),
+        (
+            "DESTINATION",
+            summary[
+                "destination_count"
+            ],
+        ),
+        (
+            "COMMON",
+            summary[
+                "common"
+            ],
+        ),
+        (
+            "SAME",
+            summary[
+                "same"
+            ],
+        ),
+        (
+            "DIFF",
+            summary[
+                "diff"
+            ],
+        ),
+        (
+            "MISSING",
+            summary[
+                "missing"
+            ],
+        ),
+        (
+            "DESTINATION ONLY",
+            summary[
+                "destination_only"
+            ],
+        ),
+    ]
+
+    for column, (
+        label,
+        value,
+    ) in zip(
+        cols,
+        metrics,
+    ):
+
+        with column:
+
+            st.metric(
+                label,
+                value,
+            )
+
+
+# ============================================================
+# PARALLEL RESOURCE FETCH
+# ============================================================
+
+def fetch_source_destination_parallel(
+    source_fetcher,
+    destination_fetcher,
+):
+    """Fetch source and destination Kubernetes data concurrently.
+
+    The two Kubernetes API calls are independent, so running them in
+    parallel reduces scan time when both clusters are reachable.
+    """
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        source_future = executor.submit(source_fetcher)
+        destination_future = executor.submit(destination_fetcher)
+
+        source = source_future.result()
+        destination = destination_future.result()
+
+    return source, destination
+
+
+# ============================================================
+# SCAN ONE RESOURCE
+# ============================================================
+
+def scan_resource(
+    resource_type,
+    source_api,
+    destination_api,
+    source_apps_api,
+    destination_apps_api,
+    namespace,
+):
+
+    # --------------------------------------------------------
+    # CONFIGMAP
+    # --------------------------------------------------------
+
+    if resource_type == "ConfigMap":
+
+        source, destination = fetch_source_destination_parallel(
+            lambda: get_all_configmaps(source_api, namespace),
+            lambda: get_all_configmaps(destination_api, namespace),
+        )
+
+        results, summary = (
+            compare_key_value_resources(
+                source,
+                destination,
+            )
+        )
+
+        return (
+            source,
+            destination,
+            results,
+            summary,
+        )
+
+    # --------------------------------------------------------
+    # SECRET
+    # --------------------------------------------------------
+
+    if resource_type == "Secret":
+
+        source, destination = fetch_source_destination_parallel(
+            lambda: get_all_secrets(source_api, namespace),
+            lambda: get_all_secrets(destination_api, namespace),
+        )
+
+        results, summary = (
+            compare_key_value_resources(
+                source,
+                destination,
+            )
+        )
+
+        return (
+            source,
+            destination,
+            results,
+            summary,
+        )
+
+    # --------------------------------------------------------
+    # DEPLOYMENT
+    # --------------------------------------------------------
+
+    if resource_type == "Deployment":
+
+        source, destination = fetch_source_destination_parallel(
+            lambda: get_all_workloads(
+                source_apps_api,
+                namespace,
+                "Deployment",
+            ),
+            lambda: get_all_workloads(
+                destination_apps_api,
+                namespace,
+                "Deployment",
+            ),
+        )
+
+        results, summary = (
+            compare_workloads(
+                source,
+                destination,
+            )
+        )
+
+        return (
+            source,
+            destination,
+            results,
+            summary,
+        )
+
+    # --------------------------------------------------------
+    # STATEFULSET
+    # --------------------------------------------------------
+
+    if resource_type == "StatefulSet":
+
+        source, destination = fetch_source_destination_parallel(
+            lambda: get_all_workloads(
+                source_apps_api,
+                namespace,
+                "StatefulSet",
+            ),
+            lambda: get_all_workloads(
+                destination_apps_api,
+                namespace,
+                "StatefulSet",
+            ),
+        )
+
+        results, summary = (
+            compare_workloads(
+                source,
+                destination,
+            )
+        )
+
+        return (
+            source,
+            destination,
+            results,
+            summary,
+        )
+
+    raise ValueError(
+        f"Unsupported resource type: "
+        f"{resource_type}"
+    )
+
+
+# ============================================================
+# MAIN APPLICATION
+# ============================================================
+
+def render_environment_comparator():
+
+    initialize_state()
+
+    load_css()
+
+    # ========================================================
+    # HEADER
+    # ========================================================
+
+    st.markdown(
+        '<div class="env-title">'
+        '🔍 Environment Comparator'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="env-subtitle">'
+        'Compare Kubernetes resources between '
+        'two clusters and selectively synchronize '
+        'ConfigMap or Secret values.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ========================================================
+    # ENVIRONMENT
+    # ========================================================
+
+    st.markdown(
+        "## Environment"
+    )
+
+    source_col, destination_col = (
+        st.columns(2)
+    )
+
+    with source_col:
+
+        source_env = st.selectbox(
+            "Source",
+            ENVIRONMENTS,
+            index=(
+                ENVIRONMENTS.index(
+                    st.session_state.get(
+                        "ec_source_env",
+                        "BLUE",
+                    )
+                )
+                if st.session_state.get(
+                    "ec_source_env",
+                    "BLUE",
+                ) in ENVIRONMENTS
+                else 0
+            ),
+            key="ec_source_env_select",
+        )
+
+    with destination_col:
+
+        destination_options = [
+            env
+            for env in ENVIRONMENTS
+            if env != source_env
+        ]
+
+        current_destination = (
+            st.session_state.get(
+                "ec_destination_env",
+                "Green",
+            )
+        )
+
+        destination_index = (
+            destination_options.index(
+                current_destination
+            )
+            if current_destination
+            in destination_options
+            else 0
+        )
+
+        destination_env = st.selectbox(
+            "Destination",
+            destination_options,
+            index=destination_index,
+            key="ec_destination_env_select",
+        )
+
+    st.session_state[
+        "ec_source_env"
+    ] = source_env
+
+    st.session_state[
+        "ec_destination_env"
+    ] = destination_env
+
+    # ========================================================
+    # TRANSFER DIRECTION
+    # ========================================================
+
+    st.markdown(
+        """
+        <div class="transfer-box">
+            <b>Transfer Direction</b>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    direction_col1, direction_arrow, direction_col2 = (
+        st.columns(
+            [
+                1,
+                0.15,
+                1,
+            ]
+        )
+    )
+
+    with direction_col1:
+
+        st.success(
+            f"🟢 {source_env}"
+        )
+
+    with direction_arrow:
+
+        st.markdown(
+            "<br>",
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            "➡️"
+        )
+
+    with direction_col2:
+
+        st.error(
+            f"🔴 {destination_env}"
+        )
+
+    # ========================================================
+    # KUBECONFIG
+    # ========================================================
+
+    source_col, destination_col = (
+        st.columns(2)
+    )
+
+    with source_col:
+
+        st.markdown(
+            f"### 🟢 {source_env} Cluster"
+        )
+
+        st.write(
+            f"Upload kubeconfig for "
+            f"{source_env}"
+        )
+
+        source_file = st.file_uploader(
+            f"{source_env} kubeconfig",
+            type=[
+                "yaml",
+                "yml",
+                "conf",
+            ],
+            key="ec_source_file",
+        )
+
+    with destination_col:
+
+        st.markdown(
+            f"### 🔴 {destination_env} Cluster"
+        )
+
+        st.write(
+            f"Upload kubeconfig for "
+            f"{destination_env}"
+        )
+
+        destination_file = st.file_uploader(
+            f"{destination_env} kubeconfig",
+            type=[
+                "yaml",
+                "yml",
+                "conf",
+            ],
+            key="ec_destination_file",
+        )
+
+    # ========================================================
+    # CONNECT
+    # ========================================================
+
+    connect_col, refresh_col = (
+        st.columns(2)
+    )
+
+    with connect_col:
+
+        connect = st.button(
+            "🔗 Connect to Both Clusters",
+            type="primary",
+            use_container_width=True,
+            key="ec_connect_button",
+        )
+
+    with refresh_col:
+
+        refresh = st.button(
+            "🔄 Refresh Namespace List",
+            use_container_width=True,
+            key="ec_refresh_button",
+        )
+
+    # ========================================================
+    # CONNECT ACTION
+    # ========================================================
+
+    if connect:
+
+        if (
+            source_file is None
+            or destination_file is None
+        ):
+
+            st.error(
+                "Please upload both kubeconfig files."
+            )
+
+        else:
+
+            try:
+
+                with st.spinner(
+                    "Connecting to both clusters..."
+                ):
+
+                    source_config = (
+                        load_kubeconfig(
+                            source_file
+                        )
+                    )
+
+                    destination_config = (
+                        load_kubeconfig(
+                            destination_file
+                        )
+                    )
+
+                    (
+                        source_api,
+                        source_version_api,
+                        source_apps_api,
+                    ) = create_kubernetes_api(
+                        source_config
+                    )
+
+                    (
+                        destination_api,
+                        destination_version_api,
+                        destination_apps_api,
+                    ) = create_kubernetes_api(
+                        destination_config
+                    )
+
+                    source_version = (
+                        get_cluster_version(
+                            source_version_api
+                        )
+                    )
+
+                    destination_version = (
+                        get_cluster_version(
+                            destination_version_api
+                        )
+                    )
+
+                    source_namespaces = (
+                        get_namespaces(
+                            source_api
+                        )
+                    )
+
+                    destination_namespaces = (
+                        get_namespaces(
+                            destination_api
+                        )
+                    )
+
+                    common_namespaces = sorted(
+                        set(
+                            source_namespaces
+                        )
+                        & set(
+                            destination_namespaces
+                        ),
+                        key=str.lower,
+                    )
+
+                    st.session_state[
+                        "ec_source_api"
+                    ] = source_api
+
+                    st.session_state[
+                        "ec_destination_api"
+                    ] = destination_api
+
+                    st.session_state[
+                        "ec_source_apps_api"
+                    ] = source_apps_api
+
+                    st.session_state[
+                        "ec_destination_apps_api"
+                    ] = destination_apps_api
+
+                    st.session_state[
+                        "ec_source_version"
+                    ] = source_version
+
+                    st.session_state[
+                        "ec_destination_version"
+                    ] = destination_version
+
+                    st.session_state[
+                        "ec_namespaces"
+                    ] = common_namespaces
+
+                    st.session_state[
+                        "ec_results"
+                    ] = None
+
+                st.success(
+                    "Both clusters connected successfully."
+                )
+
+            except Exception as exc:
+
+                st.error(
+                    "Unable to connect to one or both clusters."
+                )
+
+                st.exception(
+                    exc
+                )
+
+    # ========================================================
+    # REFRESH NAMESPACES
+    # ========================================================
+
+    if refresh:
+
+        source_api = (
+            st.session_state.get(
+                "ec_source_api"
+            )
+        )
+
+        destination_api = (
+            st.session_state.get(
+                "ec_destination_api"
+            )
+        )
+
+        if (
+            source_api is None
+            or destination_api is None
+        ):
+
+            st.warning(
+                "Connect to both clusters first."
+            )
+
+        else:
+
+            try:
+
+                with st.spinner(
+                    "Refreshing namespaces..."
+                ):
+
+                    source_namespaces = (
+                        get_namespaces(
+                            source_api
+                        )
+                    )
+
+                    destination_namespaces = (
+                        get_namespaces(
+                            destination_api
+                        )
+                    )
+
+                    common_namespaces = sorted(
+                        set(
+                            source_namespaces
+                        )
+                        & set(
+                            destination_namespaces
+                        ),
+                        key=str.lower,
+                    )
+
+                    st.session_state[
+                        "ec_namespaces"
+                    ] = common_namespaces
+
+                st.success(
+                    "Namespace list refreshed."
+                )
+
+            except Exception as exc:
+
+                st.error(
+                    f"Unable to refresh namespaces: "
+                    f"{exc}"
+                )
+
+    # ========================================================
+    # CONNECTED STATUS
+    # ========================================================
+
+    source_api = (
+        st.session_state.get(
+            "ec_source_api"
+        )
+    )
+
+    destination_api = (
+        st.session_state.get(
+            "ec_destination_api"
+        )
+    )
+
+    source_apps_api = (
+        st.session_state.get(
+            "ec_source_apps_api"
+        )
+    )
+
+    destination_apps_api = (
+        st.session_state.get(
+            "ec_destination_apps_api"
+        )
+    )
+
+    if (
+        source_api is not None
+        and destination_api is not None
+    ):
+
+        st.success(
+            f"🟢 {source_env} connected | "
+            f"Kubernetes "
+            f"{st.session_state.get('ec_source_version', 'Unknown')}"
+        )
+
+        st.success(
+            f"🟢 {destination_env} connected | "
+            f"Kubernetes "
+            f"{st.session_state.get('ec_destination_version', 'Unknown')}"
+        )
+
+    # ========================================================
+    # NAMESPACE
+    # ========================================================
+
+    namespaces = (
+        st.session_state.get(
+            "ec_namespaces",
+            [],
+        )
+    )
+
+    if not namespaces:
+
+        if (
+            source_api is not None
+            and destination_api is not None
+        ):
+
+            st.warning(
+                "No common namespaces found."
+            )
+
+        return
+
+    st.markdown(
+        "## 📁 Namespace"
+    )
+
+    selected_namespace = st.selectbox(
+        "Select namespace",
+        namespaces,
+        key="ec_selected_namespace",
+    )
+
+    # ========================================================
+    # RESOURCE TYPE
+    # ========================================================
+
+    st.markdown(
+        "## Resource Types"
+    )
+
+    selected_resources = st.multiselect(
+        "Select resources to compare",
+        RESOURCE_TYPES,
+        default=[
+            "ConfigMap"
+        ],
+        key="ec_resource_selection",
+    )
+
+    st.caption(
+        "Select one or more Kubernetes resource "
+        "types from the namespace."
+    )
+
+    # ========================================================
+    # SAFETY
+    # ========================================================
+
+    st.warning(
+        "🛡️ Safety: ConfigMaps and Secrets are "
+        "never automatically created or deleted. "
+        "Only explicitly selected DIFF/MISSING "
+        "ConfigMap or Secret keys can be updated. "
+        "Deployments and StatefulSets are "
+        "comparison-only."
+    )
+
+    # ========================================================
+    # PERFORMANCE / DISPLAY
+    # ========================================================
+
+    show_only_differences = st.checkbox(
+        "⚡ Show only DIFF / MISSING / DESTINATION ONLY fields",
+        value=True,
+        key="ec_show_only_differences",
+        help=(
+            "Recommended for large ConfigMaps/Secrets. "
+            "Hides unchanged fields to keep the Streamlit page fast."
+        ),
+    )
+
+    # ========================================================
+    # SCAN
+    # ========================================================
+
+    scan = st.button(
+        f"🔍 Scan {source_env} → {destination_env}",
+        type="primary",
+        use_container_width=True,
+        key="ec_scan_button",
+    )
+
+    # ========================================================
+    # SCAN ACTION
+    # ========================================================
+
+    if scan:
+
+        if not selected_resources:
+
+            st.error(
+                "Please select at least one resource type."
+            )
+
+            return
+
+        if (
+            source_api is None
+            or destination_api is None
+        ):
+
+            st.error(
+                "Please connect to both clusters first."
+            )
+
+            return
+
+        if (
+            source_apps_api is None
+            or destination_apps_api is None
+        ):
+
+            st.error(
+                "Kubernetes Apps API is not initialized."
+            )
+
+            return
+
+        all_results = {}
+        scan_start = time.perf_counter()
+
+        # Clear selections from an earlier scan.
+        for key in list(st.session_state.keys()):
+            if key.startswith("ec_pending_selected_"):
+                del st.session_state[key]
+
+        try:
+
+            with st.spinner(
+                f"Scanning namespace "
+                f"'{selected_namespace}'..."
+            ):
+
+                for resource_type in (
+                    selected_resources
+                ):
+                    resource_start = time.perf_counter()
+
+                    (
+                        source_data,
+                        destination_data,
+                        results,
+                        summary,
+                    ) = scan_resource(
+                        resource_type,
+                        source_api,
+                        destination_api,
+                        source_apps_api,
+                        destination_apps_api,
+                        selected_namespace,
+                    )
+
+                    resource_elapsed = (
+                        time.perf_counter() - resource_start
+                    )
+
+                    all_results[
+                        resource_type
+                    ] = {
+                        "source": source_data,
+                        "destination": destination_data,
+                        "results": results,
+                        "summary": summary,
+                        "scan_time": resource_elapsed,
+                    }
+
+            total_elapsed = time.perf_counter() - scan_start
+
+            st.session_state[
+                "ec_results"
+            ] = {
+                "namespace": selected_namespace,
+                "resources": all_results,
+                "scan_time": total_elapsed,
+            }
+
+            st.success(
+                f"Scan completed successfully in "
+                f"{total_elapsed:.2f} seconds."
+            )
+
+            timing_text = " | ".join(
+                f"{resource_type}: "
+                f"{data['scan_time']:.2f}s"
+                for resource_type, data in all_results.items()
+            )
+            if timing_text:
+                st.caption(f"⏱️ API + comparison time: {timing_text}")
+
+        except Exception as exc:
+
+            st.error(
+                "Resource scan failed."
+            )
+
+            st.exception(
+                exc
+            )
+
+            return
+
+    # ========================================================
+    # RESULTS
+    # ========================================================
+
+    stored = (
+        st.session_state.get(
+            "ec_results"
+        )
+    )
+
+    if stored is None:
+
+        return
+
+    namespace = stored[
+        "namespace"
+    ]
+
+    resources = stored[
+        "resources"
+    ]
+
+    # ========================================================
+    # RESULTS HEADER
+    # ========================================================
+
+    st.markdown(
+        "## Resource Differences"
+    )
+
+    st.caption(
+        f"Namespace: `{namespace}`"
+    )
+
+    # ========================================================
+    # RENDER EACH RESOURCE
+    # ========================================================
+
+    for resource_type in (
+        selected_resources
+    ):
+
+        if resource_type not in resources:
+            continue
+
+        resource_result = (
+            resources[
+                resource_type
+            ]
+        )
+
+        source_data = (
+            resource_result[
+                "source"
+            ]
+        )
+
+        destination_data = (
+            resource_result[
+                "destination"
+            ]
+        )
+
+        results = (
+            resource_result[
+                "results"
+            ]
+        )
+
+        summary = (
+            resource_result[
+                "summary"
+            ]
+        )
+
+        st.divider()
+
+        st.markdown(
+            f"## {resource_type}"
+        )
+
+        # ----------------------------------------------------
+        # SUMMARY
+        # ----------------------------------------------------
+
+        render_summary(
+            resource_type,
+            summary,
+        )
+
+        # ----------------------------------------------------
+        # INFORMATION
+        # ----------------------------------------------------
+
+        if resource_type in (
+            "ConfigMap",
+            "Secret",
+        ):
+
+            if show_only_differences:
+                st.caption(
+                    "⚡ Performance mode: unchanged SAME/EMPTY fields are "
+                    "hidden. Disable the checkbox above to view all fields."
+                )
+
+            st.info(
+                f"{resource_type}: "
+                "SAME means source and destination "
+                "values are identical. "
+                "DIFF means both exist but values differ. "
+                "MISSING means the source key does not "
+                "exist in destination. "
+                "DESTINATION ONLY means the key exists "
+                "only in destination."
+            )
+
+        else:
+
+            st.info(
+                f"{resource_type}: "
+                "Comparison only. "
+                "SAME means the normalized field values "
+                "match. DIFF means they differ. "
+                "No automatic workload updates are performed."
+            )
+
+        # ----------------------------------------------------
+        # FAST COMPARISON TABLE
+        # ----------------------------------------------------
+
+        if resource_type in ("ConfigMap", "Secret"):
+
+            selectable_count = sum(
+                1
+                for item in results
+                if item.get("destination_exists")
+                for field in item.get("fields", [])
+                if field.get("status") in ("DIFF", "MISSING")
+            )
+
+            select_all_key = (
+                f"ec_select_all_{resource_type}_{namespace}"
+            )
+
+            select_all = st.checkbox(
+                f"☑️ Select all DIFF/MISSING {resource_type} keys "
+                f"with an existing destination ({selectable_count} key(s))",
+                key=select_all_key,
+                help=(
+                    "Uses one compact table and one boolean instead of hundreds "
+                    "of individual Streamlit checkbox widgets."
+                ),
+            )
+
+            if select_all:
+                st.caption(
+                    f"⚡ Select All active: {selectable_count} actionable keys "
+                    "will be selected."
+                )
+
+        else:
+            select_all = False
+
+        # Hide unchanged resources in performance mode.
+        if show_only_differences:
+            render_results = [
+                item for item in results
+                if resource_has_actionable_changes(item)
+            ]
+
+            hidden_count = len(results) - len(render_results)
+            if hidden_count:
+                st.caption(
+                    f"⚡ {hidden_count} unchanged resource(s) hidden in performance mode."
+                )
+        else:
+            render_results = results
+
+        if not render_results:
+            st.success(
+                f"No differences found for {resource_type} in this namespace."
+            )
+            continue
+
+        if resource_type in ("ConfigMap", "Secret"):
+            selected, submitted = render_fast_comparison_table(
+                resource_type,
+                namespace,
+                render_results,
+                show_only_differences=show_only_differences,
+                select_all=select_all,
+            )
+
+            if submitted:
+                pending_key = (
+                    f"ec_pending_selected_{resource_type}_{namespace}"
+                )
+                st.session_state[pending_key] = selected or {}
+
+                if selected:
+                    st.success(
+                        f"{sum(len(v) for v in selected.values())} "
+                        f"{resource_type} key(s) selected."
+                    )
+                else:
+                    st.warning(
+                        f"No {resource_type} keys were selected."
+                    )
+
+            pending_key = (
+                f"ec_pending_selected_{resource_type}_{namespace}"
+            )
+            selected = st.session_state.get(pending_key, {})
+
+            if selected:
+                update_selected_resource(
+                    resource_type,
+                    destination_api,
+                    namespace,
+                    source_data,
+                    selected,
+                )
+
+        else:
+            # Workloads are comparison-only; a single dataframe is much faster
+            # than rendering a row of Streamlit columns for every field.
+            rows = []
+            for item in render_results:
+                for field in item.get("fields", []):
+                    if show_only_differences and field.get("status") not in (
+                        "DIFF",
+                        "MISSING",
+                        "DESTINATION_ONLY",
+                    ):
+                        continue
+                    rows.append({
+                        "Resource": item["name"],
+                        "Field": field["key"],
+                        "Source": field.get("source_value", ""),
+                        "Destination": field.get("destination_value", ""),
+                        "Status": field.get("status", ""),
+                    })
+
+            if rows:
+                st.dataframe(
+                    pd.DataFrame(rows),
+                    hide_index=True,
+                    use_container_width=True,
+                    height=min(650, max(180, 45 + len(rows) * 35)),
+                )
+
+
+
+# ============================================================
+# RUN
+# ============================================================
+
+if __name__ == "__main__":
+
+    render_environment_comparator()
