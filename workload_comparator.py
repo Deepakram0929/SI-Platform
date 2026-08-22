@@ -484,7 +484,7 @@ def render_workload_comparator():
 
     with upload_col1:
 
-        st.markdown("### 🔵 Environment 1")
+        st.markdown("###  Environment 1")
 
         env1 = st.selectbox(
             "Select Environment 1",
@@ -501,7 +501,7 @@ def render_workload_comparator():
 
     with upload_col2:
 
-        st.markdown("### 🟢 Environment 2")
+        st.markdown("###  Environment 2")
 
         env2 = st.selectbox(
             "Select Environment 2",

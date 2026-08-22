@@ -33,6 +33,7 @@ ENVIRONMENTS = [
     "DEV",
     "Green",
     "STAGING",
+    "Preprod",
     "Prod",
 ]
 
@@ -2475,7 +2476,7 @@ def render_environment_comparator():
     with direction_col1:
 
         st.success(
-            f"🟢 {source_env}"
+            f"{source_env}"
         )
 
     with direction_arrow:
@@ -2492,7 +2493,7 @@ def render_environment_comparator():
     with direction_col2:
 
         st.error(
-            f"🔴 {destination_env}"
+            f"{destination_env}"
         )
 
     # ========================================================
@@ -2506,7 +2507,7 @@ def render_environment_comparator():
     with source_col:
 
         st.markdown(
-            f"### 🟢 {source_env} Cluster"
+            f"###  {source_env} Cluster"
         )
 
         st.write(
@@ -2527,7 +2528,7 @@ def render_environment_comparator():
     with destination_col:
 
         st.markdown(
-            f"### 🔴 {destination_env} Cluster"
+            f"###  {destination_env} Cluster"
         )
 
         st.write(
@@ -2807,13 +2808,13 @@ def render_environment_comparator():
     ):
 
         st.success(
-            f"🟢 {source_env} connected | "
+            f" {source_env} connected | "
             f"Kubernetes "
             f"{st.session_state.get('ec_source_version', 'Unknown')}"
         )
 
         st.success(
-            f"🟢 {destination_env} connected | "
+            f" {destination_env} connected | "
             f"Kubernetes "
             f"{st.session_state.get('ec_destination_version', 'Unknown')}"
         )
