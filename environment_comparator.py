@@ -17,7 +17,7 @@ from kubernetes import config as kube_config
 
 st.set_page_config(
     page_title="Environment Comparator",
-    page_icon="🔍",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -2363,7 +2363,7 @@ def render_environment_comparator():
 
     st.markdown(
         '<div class="env-title">'
-        '🔍 Environment Comparator'
+        'Environment Comparator'
         '</div>',
         unsafe_allow_html=True,
     )

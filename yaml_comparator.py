@@ -1295,7 +1295,7 @@ def render_yaml_comparator():
         <div class="yaml-page-title">
 
             <span class="yaml-page-icon">
-                📄
+                
             </span>
 
             <span class="yaml-page-title-text">

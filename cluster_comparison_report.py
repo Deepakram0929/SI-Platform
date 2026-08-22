@@ -2050,7 +2050,7 @@ def collect_both_clusters(
 def render_cluster_comparison_report():
 
     st.title(
-        "📊 Cluster Comparison Report"
+        "Cluster Comparison Report"
     )
 
     st.caption(

@@ -1232,7 +1232,7 @@ def render_db_string():
 
 
     st.markdown(
-        '<div class="db-title">🔗 DB String</div>',
+        '<div class="db-title">DB String</div>',
         unsafe_allow_html=True,
     )
 
