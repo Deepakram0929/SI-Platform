@@ -1610,8 +1610,14 @@ def add_ingress_comparison_sheet(
 
     return ws
 
-def _add_namespace_filter(workbook, namespaces, metrics, selected_resources=None):
-    """Create a native Excel multi-namespace filter sheet for all selected resources."""
+def _add_namespace_filter(workbook, namespaces, metrics):
+    """Create a dedicated native Excel multi-namespace filter sheet.
+
+    The Summary UI remains unchanged. Summary!C5 is a compact Filter button
+    that opens this sheet. The Namespace column has Excel's normal checkbox
+    filter (Select All + individual namespaces). Filtering the rows changes
+    the SUBTOTAL visibility helper and therefore the Summary formulas.
+    """
     sheet_name = "Namespace Filter"
     if sheet_name in workbook.sheetnames:
         del workbook[sheet_name]
@@ -1619,32 +1625,19 @@ def _add_namespace_filter(workbook, namespaces, metrics, selected_resources=None
     ws = workbook.create_sheet(sheet_name)
     styles = _excel_styles()
 
-    resources = [
-        r for r in (
-            selected_resources
-            or ["Workloads", "Images", "ConfigMaps", "Secrets", "Ingress", "Volumes", "PVC"]
-        )
-        if r in {"Workloads", "Images", "ConfigMaps", "Secrets", "Ingress", "Volumes", "PVC"}
-    ]
-
     values = sorted(
         {str(n).strip() for n in (namespaces or []) if str(n).strip()},
         key=str.lower,
     )
 
-    headers = ["Namespace", "Visible"]
-    resource_cols = {}
-    next_col = 3
-    for resource in resources:
-        cols = []
-        for suffix in (
-            "Source", "Destination", "Same", "Different", "Missing", "Destination Only"
-        ):
-            header = f"{resource} {suffix}"
-            headers.append(header)
-            cols.append(get_column_letter(next_col))
-            next_col += 1
-        resource_cols[resource] = cols
+    headers = [
+        "Namespace", "Visible",
+        "Images Source", "Images Destination", "Images Same",
+        "Images Different", "Images Missing", "Images Destination Only",
+        "ConfigMaps Source", "ConfigMaps Destination", "ConfigMaps Same",
+        "ConfigMaps Different", "ConfigMaps Missing",
+        "ConfigMaps Destination Only",
+    ]
 
     for col, header in enumerate(headers, start=1):
         cell = ws.cell(1, col, header)
@@ -1659,27 +1652,39 @@ def _add_namespace_filter(workbook, namespaces, metrics, selected_resources=None
     for row in metrics or []:
         ns = str(row.get("Namespace", "")).strip()
         resource = str(row.get("Resource", "")).strip()
-        if ns and resource in resources:
+        if ns and resource in {"Images", "ConfigMaps"}:
             metric_map[(ns, resource)] = row
 
     for row_idx, namespace in enumerate(values, start=2):
         ws.cell(row_idx, 1, namespace)
         ws.cell(row_idx, 2, f"=SUBTOTAL(103,$A{row_idx})")
 
-        for resource in resources:
-            metric = metric_map.get((namespace, resource), {})
-            vals = [
-                metric.get("Source Count", 0),
-                metric.get("Destination Count", 0),
-                metric.get("Same", 0),
-                metric.get("Different", 0),
-                metric.get("Missing", 0),
-                metric.get("Destination Only", 0),
-            ]
-            for col_letter, value in zip(resource_cols[resource], vals):
-                ws[f"{col_letter}{row_idx}"] = value or 0
+        image = metric_map.get((namespace, "Images"), {})
+        config = metric_map.get((namespace, "ConfigMaps"), {})
 
-        for col in range(1, len(headers) + 1):
+        image_vals = [
+            image.get("Source Count", 0),
+            image.get("Destination Count", 0),
+            image.get("Same", 0),
+            image.get("Different", 0),
+            image.get("Missing", 0),
+            image.get("Destination Only", 0),
+        ]
+        config_vals = [
+            config.get("Source Count", 0),
+            config.get("Destination Count", 0),
+            config.get("Same", 0),
+            config.get("Different", 0),
+            config.get("Missing", 0),
+            config.get("Destination Only", 0),
+        ]
+
+        for col, value in enumerate(image_vals, start=3):
+            ws.cell(row_idx, col, value or 0)
+        for col, value in enumerate(config_vals, start=9):
+            ws.cell(row_idx, col, value or 0)
+
+        for col in range(1, 15):
             ws.cell(row_idx, col).border = styles["border"]
 
     last_row = max(2, len(values) + 1)
@@ -1687,7 +1692,7 @@ def _add_namespace_filter(workbook, namespaces, metrics, selected_resources=None
     if values:
         table = Table(
             displayName="NamespaceSelectionTable",
-            ref=f"A1:{get_column_letter(len(headers))}{last_row}",
+            ref=f"A1:N{last_row}",
         )
         table.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium2",
@@ -1698,8 +1703,9 @@ def _add_namespace_filter(workbook, namespaces, metrics, selected_resources=None
         )
         ws.add_table(table)
 
-    # Keep only Namespace visible; helper columns are hidden.
-    for col in range(2, len(headers) + 1):
+    # Keep only Namespace visible. The remaining columns are calculation
+    # helpers and should never alter the Summary UI.
+    for col in range(2, 15):
         ws.column_dimensions[get_column_letter(col)].hidden = True
 
     ws.column_dimensions["A"].width = 36
@@ -1721,122 +1727,21 @@ def _add_namespace_filter(workbook, namespaces, metrics, selected_resources=None
         start_row=note_row,
         start_column=1,
         end_row=note_row + 1,
-        end_column=min(6, len(headers)),
+        end_column=6,
     )
     ws.cell(note_row, 1).font = Font(italic=True, color="666666")
     ws.cell(note_row, 1).alignment = Alignment(
-        wrap_text=True, vertical="top"
+        wrap_text=True,
+        vertical="top",
     )
 
     return {
         "first_row": 2,
         "last_row": last_row,
         "visibility_col": "B",
-        "resource_cols": resource_cols,
+        "images_cols": ["C", "D", "E", "F", "G", "H"],
+        "configmaps_cols": ["I", "J", "K", "L", "M", "N"],
     }
-
-
-def _add_resource_type_filter(workbook, selected_resources, namespace_filter):
-    """Create a native Excel resource-type filter used by the Summary dashboard."""
-    sheet_name = "Resource Type Filter"
-    if sheet_name in workbook.sheetnames:
-        del workbook[sheet_name]
-
-    ws = workbook.create_sheet(sheet_name)
-    styles = _excel_styles()
-
-    resources = [
-        r for r in (selected_resources or [])
-        if r in {"Workloads", "Images", "ConfigMaps", "Secrets", "Ingress", "Volumes", "PVC"}
-    ]
-
-    headers = [
-        "Resource Type",
-        "Visible",
-        "Source Count",
-        "Destination Count",
-        "Same",
-        "Different",
-        "Missing",
-        "Destination Only",
-    ]
-    ws.append(headers)
-
-    for col, header in enumerate(headers, start=1):
-        cell = ws.cell(1, col, header)
-        cell.fill = styles["header_fill"]
-        cell.font = styles["header_font"]
-        cell.border = styles["border"]
-        cell.alignment = Alignment(
-            horizontal="center", vertical="center", wrap_text=True
-        )
-
-    first_row = 2
-    last_row = max(first_row, first_row + len(resources) - 1)
-
-    for row_idx, resource in enumerate(resources, start=first_row):
-        ws.cell(row_idx, 1, resource)
-        ws.cell(row_idx, 2, f"=SUBTOTAL(103,$A{row_idx})")
-
-        cols = namespace_filter["resource_cols"].get(resource, [])
-        for target_col, source_col in zip(range(3, 9), cols):
-            ws.cell(
-                row_idx,
-                target_col,
-                f"=SUMPRODUCT('Namespace Filter'!$B${namespace_filter['first_row']}:"
-                f"$B${namespace_filter['last_row']},"
-                f"'Namespace Filter'!${source_col}${namespace_filter['first_row']}:"
-                f"${source_col}${namespace_filter['last_row']})",
-            )
-
-        for col in range(1, 9):
-            ws.cell(row_idx, col).border = styles["border"]
-            ws.cell(row_idx, col).alignment = Alignment(
-                vertical="top", wrap_text=True
-            )
-
-    if resources:
-        table = Table(
-            displayName="ResourceTypeSelectionTable",
-            ref=f"A1:H{last_row}",
-        )
-        table.tableStyleInfo = TableStyleInfo(
-            name="TableStyleMedium2",
-            showFirstColumn=False,
-            showLastColumn=False,
-            showRowStripes=True,
-            showColumnStripes=False,
-        )
-        ws.add_table(table)
-
-    for col in range(2, 9):
-        ws.column_dimensions[get_column_letter(col)].hidden = True
-    ws.column_dimensions["A"].width = 30
-    ws.freeze_panes = "A2"
-    ws.sheet_view.showGridLines = False
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-
-    note_row = last_row + 2
-    ws.cell(
-        note_row,
-        1,
-        "Use the filter arrow in Resource Type to select/unselect "
-        "Workloads, Images, ConfigMaps, Secrets, Ingress, Volumes and PVC. "
-        "The Summary dashboard updates automatically.",
-    )
-    ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row + 1, end_column=6)
-    ws.cell(note_row, 1).font = Font(italic=True, color="666666")
-    ws.cell(note_row, 1).alignment = Alignment(wrap_text=True, vertical="top")
-
-    return {
-        "first_row": first_row,
-        "last_row": last_row,
-        "resources": resources,
-    }
-
 
 def _write_namespace_metrics_sheet(workbook, metrics):
     """Write one row per selected namespace/resource for formula-driven Summary."""
@@ -2092,17 +1997,22 @@ def _add_resource_summary_sheet(
     metrics,
 ):
     """
-    Create the Summary dashboard.
+    Create the modern Summary dashboard.
 
-    Summary supports all resource types:
-      Workloads, Images, ConfigMaps, Secrets, Ingress, Volumes, PVC.
+    Summary intentionally shows ONLY:
+      - Images
+      - ConfigMaps
 
-    Namespace and Resource Type are independently filterable from their
-    dedicated native Excel filter sheets. Summary formulas respond to both.
+    The existing Namespace Filter sheet and all comparison formulas are kept.
+    This function only improves the Summary presentation and fixes the previous
+    overlap where the percentage cards were hidden by the instruction block.
     """
     ws = workbook.create_sheet("Summary")
     styles = _excel_styles()
 
+    # ------------------------------------------------------------
+    # MODERN SUMMARY PALETTE
+    # ------------------------------------------------------------
     NAVY = "173F5F"
     BLUE = "2F75B5"
     LIGHT_BLUE = "EAF3F8"
@@ -2127,43 +2037,42 @@ def _add_resource_summary_sheet(
     def fill(color):
         return PatternFill("solid", fgColor=color)
 
+    def style_range(start_row, start_col, end_row, end_col,
+                    fill_color=None, font=None, alignment=None,
+                    border=card_border):
+        for row in ws.iter_rows(
+            min_row=start_row,
+            max_row=end_row,
+            min_col=start_col,
+            max_col=end_col,
+        ):
+            for cell in row:
+                if fill_color:
+                    cell.fill = fill(fill_color)
+                if font:
+                    cell.font = font
+                if alignment:
+                    cell.alignment = alignment
+                if border:
+                    cell.border = border
+
+    # ------------------------------------------------------------
+    # PAGE / COLUMN SETUP
+    # ------------------------------------------------------------
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A11"
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.outlinePr.summaryBelow = True
 
     widths = {
-        "A": 24, "B": 18, "C": 18, "D": 16, "E": 16,
-        "F": 18, "G": 18, "H": 16, "I": 16,
+        "A": 24, "B": 18, "C": 18,
+        "D": 16, "E": 16, "F": 16, "G": 16, "H": 18, "I": 18,
     }
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
-
-    resources = [
-        r for r in (selected_resources or [])
-        if r in {"Workloads", "Images", "ConfigMaps", "Secrets", "Ingress", "Volumes", "PVC"}
-    ]
-
-    # ------------------------------------------------------------
-    # FILTER SHEETS
-    # ------------------------------------------------------------
-    report_namespaces = sorted(
-        {str(n).strip() for n in (selected_namespaces or []) if str(n).strip()},
-        key=str.lower,
-    )
-    namespace_filter = _add_namespace_filter(
-        workbook, report_namespaces, metrics, resources
-    )
-    resource_filter = _add_resource_type_filter(
-        workbook, resources, namespace_filter
-    )
-
-    nf_first = namespace_filter["first_row"]
-    nf_last = namespace_filter["last_row"]
-    rf_first = resource_filter["first_row"]
-    rf_last = resource_filter["last_row"]
 
     # ------------------------------------------------------------
     # TITLE
@@ -2171,8 +2080,15 @@ def _add_resource_summary_sheet(
     ws.merge_cells("A1:I1")
     ws["A1"] = "CLUSTER COMPARISON"
     ws["A1"].fill = fill(NAVY)
-    ws["A1"].font = Font(bold=True, color=WHITE, size=20)
-    ws["A1"].alignment = Alignment(horizontal="left", vertical="center")
+    ws["A1"].font = Font(
+        bold=True,
+        color=WHITE,
+        size=20,
+    )
+    ws["A1"].alignment = Alignment(
+        horizontal="left",
+        vertical="center",
+    )
     ws.row_dimensions[1].height = 38
 
     ws.merge_cells("A2:I2")
@@ -2180,131 +2096,170 @@ def _add_resource_summary_sheet(
         f"{source_env}  →  {destination_env}"
         "    |    Environment readiness & configuration comparison"
     )
-    ws["A2"].font = Font(color=MUTED, size=11, italic=True)
-    ws["A2"].alignment = Alignment(horizontal="left", vertical="center")
+    ws["A2"].font = Font(
+        color=MUTED,
+        size=11,
+        italic=True,
+    )
+    ws["A2"].alignment = Alignment(
+        horizontal="left",
+        vertical="center",
+    )
     ws.row_dimensions[2].height = 26
 
+    # Small accent line.
     ws.merge_cells("A3:I3")
     ws["A3"].fill = fill(BLUE)
     ws["A3"].border = Border(bottom=medium)
     ws.row_dimensions[3].height = 4
 
     # ------------------------------------------------------------
-    # FILTER CARDS
+    # ENVIRONMENT / FILTER CARDS
     # ------------------------------------------------------------
+    # Source card
     ws["A4"] = "SOURCE ENVIRONMENT"
     ws["A5"] = source_env
+
+    # Destination card
     ws["B4"] = "DESTINATION ENVIRONMENT"
     ws["B5"] = destination_env
 
     for ref in ("A4", "B4"):
         ws[ref].fill = fill(LIGHT_BLUE)
-        ws[ref].font = Font(bold=True, color=NAVY, size=9)
+        ws[ref].font = Font(
+            bold=True,
+            color=NAVY,
+            size=9,
+        )
         ws[ref].alignment = Alignment(
-            horizontal="center", vertical="center", wrap_text=True
+            horizontal="center",
+            vertical="center",
+            wrap_text=True,
         )
         ws[ref].border = card_border
 
     for ref in ("A5", "B5"):
         ws[ref].fill = fill(PALE_BLUE)
-        ws[ref].font = Font(bold=True, color=TEXT, size=13)
-        ws[ref].alignment = Alignment(horizontal="center", vertical="center")
+        ws[ref].font = Font(
+            bold=True,
+            color=TEXT,
+            size=13,
+        )
+        ws[ref].alignment = Alignment(
+            horizontal="center",
+            vertical="center",
+        )
         ws[ref].border = card_border
 
+    # Merge the filter card vertically so it is visually distinct.
     ws.merge_cells("C4:C5")
+    report_namespaces = sorted(
+        {str(n).strip() for n in (selected_namespaces or []) if str(n).strip()},
+        key=str.lower,
+    )
+
+    namespace_filter = _add_namespace_filter(
+        workbook,
+        report_namespaces,
+        metrics,
+    )
+
+    first_row = namespace_filter["first_row"]
+    last_row = namespace_filter["last_row"]
+    total_namespaces = len(report_namespaces)
+
     ws["C4"] = (
-        f'=SUBTOTAL(103,\'Namespace Filter\'!$A${nf_first}:$A${nf_last})'
-        f'&" / "&COUNTA(\'Namespace Filter\'!$A${nf_first}:$A${nf_last})'
-        f'&CHAR(10)&"FILTER NAMESPACES"'
-        if report_namespaces
+        f'=SUBTOTAL(103,\'Namespace Filter\'!$A${first_row}:'
+        f'$A${last_row})&" / "&COUNTA(\'Namespace Filter\'!$A${first_row}:'
+        f'$A${last_row})&CHAR(10)&"FILTER NAMESPACES"'
+        if total_namespaces
         else '="0 / 0"&CHAR(10)&"FILTER NAMESPACES"'
     )
     ws["C4"].fill = fill(NAVY)
-    ws["C4"].font = Font(bold=True, color=WHITE, size=10)
+    ws["C4"].font = Font(
+        bold=True,
+        color=WHITE,
+        size=11,
+    )
     ws["C4"].alignment = Alignment(
-        horizontal="center", vertical="center", wrap_text=True
+        horizontal="center",
+        vertical="center",
+        wrap_text=True,
     )
     ws["C4"].border = Border(
         left=medium, right=medium, top=medium, bottom=medium
     )
     ws["C4"].hyperlink = "#'Namespace Filter'!A1"
 
-    ws.merge_cells("A6:B6")
-    ws["A6"] = "RESOURCE TYPE FILTER"
-    ws["A6"].fill = fill(LIGHT_BLUE)
-    ws["A6"].font = Font(bold=True, color=NAVY, size=9)
-    ws["A6"].alignment = Alignment(horizontal="center", vertical="center")
-    ws["A6"].border = card_border
-
-    ws.merge_cells("A7:B8")
-    ws["A7"] = (
-        f'=SUBTOTAL(103,\'Resource Type Filter\'!$A${rf_first}:$A${rf_last})'
-        f'&" / "&COUNTA(\'Resource Type Filter\'!$A${rf_first}:$A${rf_last})'
-        f'&CHAR(10)&"RESOURCE TYPES SELECTED"'
-        if resources
-        else '="0 / 0"&CHAR(10)&"RESOURCE TYPES SELECTED"'
-    )
-    ws["A7"].fill = fill(NAVY)
-    ws["A7"].font = Font(bold=True, color=WHITE, size=10)
-    ws["A7"].alignment = Alignment(
-        horizontal="center", vertical="center", wrap_text=True
-    )
-    ws["A7"].border = Border(
-        left=medium, right=medium, top=medium, bottom=medium
-    )
-    ws["A7"].hyperlink = "#'Resource Type Filter'!A1"
-
-    ws.merge_cells("C6:C8")
-    ws["C6"] = (
-        "FILTERS\n"
-        "Namespace + Resource Type\n"
-        "Use the filter arrows to select multiple values"
-    )
-    ws["C6"].fill = fill(PALE_BLUE)
-    ws["C6"].font = Font(bold=True, color=NAVY, size=9)
-    ws["C6"].alignment = Alignment(
-        horizontal="center", vertical="center", wrap_text=True
-    )
-    ws["C6"].border = Border(
-        left=medium, right=medium, top=medium, bottom=medium
-    )
-
-    for r in (4, 5, 6, 7, 8):
-        ws.row_dimensions[r].height = 26
+    ws.row_dimensions[4].height = 30
+    ws.row_dimensions[5].height = 30
 
     # ------------------------------------------------------------
     # TOP KPI CARDS
     # ------------------------------------------------------------
-    # Resource Type Filter columns: B=Visible, C:H=metrics.
-    def kpi_formula(metric_col):
-        if not resources:
-            return "=0"
-        return (
-            f'=SUMPRODUCT((\'Resource Type Filter\'!$B${rf_first}:$B${rf_last}=1)*'
-            f'\'Resource Type Filter\'!${metric_col}${rf_first}:${metric_col}${rf_last})'
-        )
-
     kpis = [
-        ("TOTAL COMPARED", "C", PALE_BLUE, TEXT),
-        ("MATCHING", "E", GREEN, GREEN_TEXT),
-        ("DIFFERENT", "F", ORANGE, ORANGE_TEXT),
-        ("MISSING", "G", YELLOW, YELLOW_TEXT),
-        ("DESTINATION ONLY", "H", DEST, DEST_TEXT),
+        ("TOTAL COMPARED", "TOTAL", PALE_BLUE),
+        ("MATCHING", "SAME", GREEN),
+        ("DIFFERENT", "DIFF", ORANGE),
+        ("MISSING", "MISSING", YELLOW),
+        ("DESTINATION ONLY", "DESTINATION ONLY", DEST),
     ]
 
-    for col, (label, metric_col, card_fill, text_color) in enumerate(kpis, start=4):
+    def summary_formula(metric_column):
+        if not report_namespaces:
+            return "=0"
+
+        helper_map = {
+            "TOTAL": ["C", "I"],
+            "SAME": ["E", "K"],
+            "DIFF": ["F", "L"],
+            "MISSING": ["G", "M"],
+            "DESTINATION ONLY": ["H", "N"],
+        }
+
+        terms = [
+            (
+                f"SUBTOTAL(109,'Namespace Filter'!${col}${first_row}:"
+                f"${col}${last_row})"
+            )
+            for col in helper_map[metric_column]
+        ]
+        return "=" + "+".join(terms)
+
+    for col, (label, metric, card_fill) in enumerate(kpis, start=4):
         label_cell = ws.cell(4, col, label)
-        value_cell = ws.cell(5, col, kpi_formula(metric_col))
+        value_cell = ws.cell(5, col, summary_formula(metric))
+
         label_cell.fill = fill(LIGHT_BLUE)
-        label_cell.font = Font(bold=True, color=NAVY, size=9)
+        label_cell.font = Font(
+            bold=True,
+            color=NAVY,
+            size=9,
+        )
         label_cell.alignment = Alignment(
-            horizontal="center", vertical="center", wrap_text=True
+            horizontal="center",
+            vertical="center",
+            wrap_text=True,
         )
         label_cell.border = card_border
+
         value_cell.fill = fill(card_fill)
-        value_cell.font = Font(bold=True, color=text_color, size=18)
-        value_cell.alignment = Alignment(horizontal="center", vertical="center")
+        value_cell.font = Font(
+            bold=True,
+            color=TEXT,
+            size=18,
+        )
+        value_cell.alignment = Alignment(
+            horizontal="center",
+            vertical="center",
+        )
         value_cell.border = card_border
+
+    # Make status KPI numbers visually meaningful.
+    ws["E5"].font = Font(bold=True, color=GREEN_TEXT, size=18)
+    ws["F5"].font = Font(bold=True, color=ORANGE_TEXT, size=18)
+    ws["G5"].font = Font(bold=True, color=YELLOW_TEXT, size=18)
+    ws["H5"].font = Font(bold=True, color=DEST_TEXT, size=18)
 
     # ------------------------------------------------------------
     # PERCENTAGE / HEALTH CARDS
@@ -2317,34 +2272,84 @@ def _add_resource_summary_sheet(
         ("DESTINATION ONLY", '=IF(D5=0,0,H5/(E5+F5+G5+H5))', DEST, DEST_TEXT),
     ]
 
-    for col, (label, formula, card_fill, text_color) in enumerate(percent_kpis, start=4):
+    for col, (label, formula, card_fill, text_color) in enumerate(
+        percent_kpis,
+        start=4,
+    ):
         label_cell = ws.cell(7, col, label)
         value_cell = ws.cell(8, col, formula)
+
         label_cell.fill = fill(PALE_BLUE)
-        label_cell.font = Font(bold=True, color=MUTED, size=9)
+        label_cell.font = Font(
+            bold=True,
+            color=MUTED,
+            size=9,
+        )
         label_cell.alignment = Alignment(
-            horizontal="center", vertical="center", wrap_text=True
+            horizontal="center",
+            vertical="center",
+            wrap_text=True,
         )
         label_cell.border = card_border
+
         value_cell.fill = fill(card_fill)
-        value_cell.font = Font(bold=True, color=text_color, size=15)
-        value_cell.alignment = Alignment(horizontal="center", vertical="center")
+        value_cell.font = Font(
+            bold=True,
+            color=text_color,
+            size=15,
+        )
+        value_cell.alignment = Alignment(
+            horizontal="center",
+            vertical="center",
+        )
         value_cell.border = card_border
         value_cell.number_format = "0.00%"
 
-    # ------------------------------------------------------------
-    # SUMMARY TABLE
-    # ------------------------------------------------------------
-    section_row = 10
-    ws.merge_cells("A10:I10")
-    ws["A10"] = "RESOURCE COMPARISON"
-    ws["A10"].fill = fill(NAVY)
-    ws["A10"].font = Font(bold=True, color=WHITE, size=11)
-    ws["A10"].alignment = Alignment(horizontal="left", vertical="center")
-    ws["A10"].border = Border(
+    # Scope / explanation card on the left.
+    ws.merge_cells("A7:C8")
+    ws["A7"] = (
+        "SUMMARY SCOPE\n"
+        "Images + ConfigMaps only\n"
+        "Use FILTER NAMESPACES to refine the report"
+    )
+    ws["A7"].fill = fill(PALE_BLUE)
+    ws["A7"].font = Font(
+        bold=True,
+        color=NAVY,
+        size=10,
+    )
+    ws["A7"].alignment = Alignment(
+        horizontal="left",
+        vertical="center",
+        wrap_text=True,
+    )
+    ws["A7"].border = Border(
         left=medium, right=medium, top=medium, bottom=medium
     )
-    ws.row_dimensions[10].height = 24
+
+    ws.row_dimensions[7].height = 24
+    ws.row_dimensions[8].height = 30
+
+    # ------------------------------------------------------------
+    # SUMMARY TABLE HEADER
+    # ------------------------------------------------------------
+    section_row = 10
+    ws.merge_cells(start_row=section_row, start_column=1, end_row=section_row, end_column=9)
+    ws.cell(section_row, 1, "RESOURCE COMPARISON")
+    ws.cell(section_row, 1).fill = fill(NAVY)
+    ws.cell(section_row, 1).font = Font(
+        bold=True,
+        color=WHITE,
+        size=11,
+    )
+    ws.cell(section_row, 1).alignment = Alignment(
+        horizontal="left",
+        vertical="center",
+    )
+    ws.cell(section_row, 1).border = Border(
+        left=medium, right=medium, top=medium, bottom=medium
+    )
+    ws.row_dimensions[section_row].height = 24
 
     header_row = 11
     headers = [
@@ -2362,52 +2367,67 @@ def _add_resource_summary_sheet(
     for col, header in enumerate(headers, start=1):
         cell = ws.cell(header_row, col, header)
         cell.fill = fill(BLUE)
-        cell.font = Font(bold=True, color=WHITE, size=9)
+        cell.font = Font(
+            bold=True,
+            color=WHITE,
+            size=9,
+        )
         cell.border = card_border
         cell.alignment = Alignment(
-            horizontal="center", vertical="center", wrap_text=True
+            horizontal="center",
+            vertical="center",
+            wrap_text=True,
         )
+
     ws.row_dimensions[header_row].height = 36
 
-    # Summary rows are driven by Resource Type Filter. When a resource type is
-    # filtered out, its row becomes zero while the overall KPIs exclude it.
-    resource_filter_col_map = {
-        "Images": ("C", "D", "E", "F", "G", "H"),
-        "ConfigMaps": ("C", "D", "E", "F", "G", "H"),
-        "Secrets": ("C", "D", "E", "F", "G", "H"),
-        "Ingress": ("C", "D", "E", "F", "G", "H"),
-        "Volumes": ("C", "D", "E", "F", "G", "H"),
-        "PVC": ("C", "D", "E", "F", "G", "H"),
-        "Workloads": ("C", "D", "E", "F", "G", "H"),
-    }
+    # Clear table area.
+    for row_idx in range(header_row + 1, header_row + 20):
+        for col_idx in range(1, 10):
+            ws.cell(row_idx, col_idx).value = None
+            ws.cell(row_idx, col_idx).fill = PatternFill(fill_type=None)
+            ws.cell(row_idx, col_idx).border = Border()
 
-    summary_rows = {}
-    for offset, resource in enumerate(resources, start=1):
+    summary_resources = ["Images", "ConfigMaps"]
+
+    for offset, resource in enumerate(summary_resources, start=1):
         row_no = header_row + offset
-        summary_rows[resource] = row_no
         ws.cell(row_no, 1, resource)
 
-        helper_cols = resource_filter_col_map[resource]
-        for target_col, helper_col in zip(range(2, 8), helper_cols):
+        helper_cols = (
+            ["C", "D", "E", "F", "G", "H"]
+            if resource == "Images"
+            else ["I", "J", "K", "L", "M", "N"]
+        )
+
+        for col_no, helper_col in zip(range(2, 8), helper_cols):
             ws.cell(
                 row_no,
-                target_col,
-                f'=SUMPRODUCT((\'Resource Type Filter\'!$A${rf_first}:$A${rf_last}'
-                f'=$A{row_no})*(\'Resource Type Filter\'!$B${rf_first}:$B${rf_last}=1)*'
-                f'\'Resource Type Filter\'!${helper_col}${rf_first}:${helper_col}${rf_last})',
+                col_no,
+                (
+                    f"=SUBTOTAL(109,'Namespace Filter'!"
+                    f"${helper_col}${first_row}:"
+                    f"${helper_col}${last_row})"
+                ),
             )
 
         ws.cell(
             row_no,
             8,
-            f'=IF(B{row_no}+C{row_no}=0,1,D{row_no}/'
-            f'(D{row_no}+E{row_no}+F{row_no}+G{row_no}))',
+            f'=IF(D{row_no}+E{row_no}+F{row_no}+G{row_no}=0,1,'
+            f'D{row_no}/(D{row_no}+E{row_no}+F{row_no}+G{row_no}))',
         )
         ws.cell(row_no, 9, f"=1-H{row_no}")
 
-        ws.cell(row_no, 1).font = Font(bold=True, color=NAVY, size=11)
+        # Resource cell.
+        ws.cell(row_no, 1).font = Font(
+            bold=True,
+            color=NAVY,
+            size=11,
+        )
         ws.cell(row_no, 1).alignment = Alignment(
-            horizontal="left", vertical="center"
+            horizontal="left",
+            vertical="center",
         )
 
         for col_no in range(1, 10):
@@ -2415,52 +2435,61 @@ def _add_resource_summary_sheet(
             cell.border = card_border
             cell.alignment = Alignment(
                 horizontal="center" if col_no > 1 else "left",
-                vertical="center", wrap_text=True
+                vertical="center",
+                wrap_text=True,
             )
 
+            if offset == 2 and col_no not in (4, 5, 6, 7):
+                cell.fill = fill(PALE_BLUE)
+
+        # Status colors.
         _apply_status(ws.cell(row_no, 4), "SAME", styles)
         _apply_status(ws.cell(row_no, 5), "DIFF", styles)
         _apply_status(ws.cell(row_no, 6), "MISSING", styles)
         _apply_status(ws.cell(row_no, 7), "DESTINATION ONLY", styles)
+
         ws.cell(row_no, 8).number_format = "0.00%"
         ws.cell(row_no, 9).number_format = "0.00%"
         ws.row_dimensions[row_no].height = 30
 
-    if not resources:
-        ws.cell(header_row + 1, 1, "No resource types selected.")
-        for col_no in range(1, 10):
-            ws.cell(header_row + 1, col_no).border = card_border
-
-    overall_row = header_row + len(resources) + 1
+    # ------------------------------------------------------------
+    # OVERALL ROW
+    # ------------------------------------------------------------
+    overall_row = header_row + 3
     ws.cell(overall_row, 1, "OVERALL")
 
-    if resources:
-        first_summary = header_row + 1
-        last_summary = header_row + len(resources)
-        for col_no in range(2, 8):
-            letter = get_column_letter(col_no)
-            ws.cell(
-                overall_row, col_no,
-                f"=SUM({letter}{first_summary}:{letter}{last_summary})",
-            )
+    for col_no in range(2, 8):
+        letter = get_column_letter(col_no)
         ws.cell(
-            overall_row, 8,
-            f'=IF(D{overall_row}+E{overall_row}+F{overall_row}+G{overall_row}=0,'
-            f'1,D{overall_row}/(D{overall_row}+E{overall_row}+F{overall_row}+G{overall_row}))',
+            overall_row,
+            col_no,
+            f"=SUM({letter}{header_row + 1}:{letter}{header_row + 2})",
         )
-        ws.cell(overall_row, 9, f"=1-H{overall_row}")
-    else:
-        for col_no in range(2, 10):
-            ws.cell(overall_row, col_no, 0)
+
+    ws.cell(
+        overall_row,
+        8,
+        f'=IF(D{overall_row}+E{overall_row}+F{overall_row}+G{overall_row}=0,'
+        f'1,D{overall_row}/(D{overall_row}+E{overall_row}+F{overall_row}+G{overall_row}))',
+    )
+    ws.cell(overall_row, 9, f"=1-H{overall_row}")
 
     for col_no in range(1, 10):
         cell = ws.cell(overall_row, col_no)
         cell.fill = fill(LIGHT_BLUE)
-        cell.font = Font(bold=True, color=NAVY, size=11)
+        cell.font = Font(
+            bold=True,
+            color=NAVY,
+            size=11,
+        )
         cell.border = Border(
             left=medium, right=medium, top=medium, bottom=medium
         )
-        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.alignment = Alignment(
+            horizontal="center",
+            vertical="center",
+        )
+
     ws.cell(overall_row, 8).number_format = "0.00%"
     ws.cell(overall_row, 9).number_format = "0.00%"
     ws.row_dimensions[overall_row].height = 32
@@ -2470,13 +2499,22 @@ def _add_resource_summary_sheet(
     # ------------------------------------------------------------
     action_row = overall_row + 3
     ws.merge_cells(
-        start_row=action_row, start_column=1,
-        end_row=action_row, end_column=9
+        start_row=action_row,
+        start_column=1,
+        end_row=action_row,
+        end_column=9,
     )
     ws.cell(action_row, 1, "ACTION REQUIRED")
     ws.cell(action_row, 1).fill = fill(NAVY)
-    ws.cell(action_row, 1).font = Font(bold=True, color=WHITE, size=11)
-    ws.cell(action_row, 1).alignment = Alignment(horizontal="left", vertical="center")
+    ws.cell(action_row, 1).font = Font(
+        bold=True,
+        color=WHITE,
+        size=11,
+    )
+    ws.cell(action_row, 1).alignment = Alignment(
+        horizontal="left",
+        vertical="center",
+    )
     ws.cell(action_row, 1).border = Border(
         left=medium, right=medium, top=medium, bottom=medium
     )
@@ -2486,64 +2524,93 @@ def _add_resource_summary_sheet(
             "MISSING IN DESTINATION",
             f'=F{overall_row}&" resource(s) are present in {source_env} '
             f'but missing in {destination_env}."',
-            YELLOW, YELLOW_TEXT,
+            YELLOW,
+            YELLOW_TEXT,
         ),
         (
             "CONFIGURATION DIFFERENCE",
             f'=E{overall_row}&" resource(s) exist in both environments '
             f'but have configuration/value differences."',
-            ORANGE, ORANGE_TEXT,
+            ORANGE,
+            ORANGE_TEXT,
         ),
         (
             "DESTINATION ONLY",
             f'=G{overall_row}&" resource(s) exist only in {destination_env}."',
-            DEST, DEST_TEXT,
+            DEST,
+            DEST_TEXT,
         ),
     ]
 
     for idx, (label, formula, card_fill, text_color) in enumerate(
-        action_items, start=action_row + 1
+        action_items,
+        start=action_row + 1,
     ):
         ws.cell(idx, 1, label)
         ws.merge_cells(
-            start_row=idx, start_column=2,
-            end_row=idx, end_column=9
+            start_row=idx,
+            start_column=2,
+            end_row=idx,
+            end_column=9,
         )
         ws.cell(idx, 2, formula)
+
         ws.cell(idx, 1).fill = fill(card_fill)
-        ws.cell(idx, 1).font = Font(bold=True, color=text_color, size=9)
+        ws.cell(idx, 1).font = Font(
+            bold=True,
+            color=text_color,
+            size=9,
+        )
         ws.cell(idx, 1).alignment = Alignment(
-            horizontal="center", vertical="center", wrap_text=True
+            horizontal="center",
+            vertical="center",
+            wrap_text=True,
         )
+
         ws.cell(idx, 2).fill = fill(PALE_BLUE)
-        ws.cell(idx, 2).font = Font(color=TEXT, size=10)
-        ws.cell(idx, 2).alignment = Alignment(
-            horizontal="left", vertical="center", wrap_text=True
+        ws.cell(idx, 2).font = Font(
+            color=TEXT,
+            size=10,
         )
+        ws.cell(idx, 2).alignment = Alignment(
+            horizontal="left",
+            vertical="center",
+            wrap_text=True,
+        )
+
         for col_no in range(1, 10):
             ws.cell(idx, col_no).border = card_border
+
         ws.row_dimensions[idx].height = 25
 
+    # Final note.
     note_row = action_row + 5
     ws.merge_cells(
-        start_row=note_row, start_column=1,
-        end_row=note_row, end_column=9
+        start_row=note_row,
+        start_column=1,
+        end_row=note_row,
+        end_column=9,
     )
     ws.cell(
-        note_row, 1,
-        "Tip: Click FILTER NAMESPACES or RESOURCE TYPES above. "
-        "Use the Excel filter arrows to select multiple values; Summary KPIs "
-        "and the resource comparison update automatically.",
+        note_row,
+        1,
+        "Tip: Click FILTER NAMESPACES above to select multiple namespaces. "
+        "The dashboard totals update from the filtered namespace set.",
     )
-    ws.cell(note_row, 1).font = Font(italic=True, color=MUTED, size=9)
+    ws.cell(note_row, 1).font = Font(
+        italic=True,
+        color=MUTED,
+        size=9,
+    )
     ws.cell(note_row, 1).alignment = Alignment(
-        horizontal="left", vertical="center"
+        horizontal="left",
+        vertical="center",
     )
     ws.row_dimensions[note_row].height = 22
+
     ws.print_title_rows = "1:11"
 
     return ws
-
 
 def _add_deployment_comparison_sheet(workbook, source_rows, destination_rows):
     """Create Workloads sheet using only deployment names."""
