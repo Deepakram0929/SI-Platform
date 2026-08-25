@@ -1701,7 +1701,6 @@ def _write_namespace_metrics_sheet(workbook, metrics):
 def _namespace_metrics(source, destination, selected_resources, namespaces):
     """Build metrics strictly for the namespaces that were scanned/selected."""
     specs = {
-        "Workloads": ("workloads", "Workloads"),
         "Images": ("workloads", "Images"),
         "ConfigMaps": ("configmaps", "ConfigMaps"),
         "Secrets": ("secrets", "Secrets"),
@@ -1770,60 +1769,9 @@ def _status_counts(rows):
 
 
 def _resource_comparison_rows(source_rows, destination_rows, resource_name):
-    """Build comparable rows for every supported resource.
-
-    Workloads are intentionally compared ONLY by Deployment name.
-    Images continue to use workload/container as their comparison key.
-    """
-
-    if resource_name == "Workloads":
-        # --------------------------------------------------------
-        # WORKLOADS = DEPLOYMENT NAMES ONLY
-        # --------------------------------------------------------
-        # Ignore StatefulSets, DaemonSets, containers and images.
-        # The UI option remains "Workloads".
-        source_deployments = {}
-        destination_deployments = {}
-
-        for row in source_rows or []:
-            if str(row.get("Workload Type", "")).strip() != "Deployment":
-                continue
-
-            namespace = str(row.get("Namespace", "") or "").strip()
-            deployment_name = str(row.get("Workload", "") or "").strip()
-
-            if not namespace or not deployment_name:
-                continue
-
-            key = (namespace, deployment_name)
-            source_deployments[key] = {
-                "Namespace": namespace,
-                "Deployment Name": deployment_name,
-            }
-
-        for row in destination_rows or []:
-            if str(row.get("Workload Type", "")).strip() != "Deployment":
-                continue
-
-            namespace = str(row.get("Namespace", "") or "").strip()
-            deployment_name = str(row.get("Workload", "") or "").strip()
-
-            if not namespace or not deployment_name:
-                continue
-
-            key = (namespace, deployment_name)
-            destination_deployments[key] = {
-                "Namespace": namespace,
-                "Deployment Name": deployment_name,
-            }
-
-        return compare_rows(
-            list(source_deployments.values()),
-            list(destination_deployments.values()),
-            ["Namespace", "Deployment Name"],
-        )
-
+    """Build comparable rows for every supported resource."""
     key_map = {
+        "Workloads": ["Namespace", "Workload Type", "Workload", "Container"],
         "Images": ["Namespace", "Workload Type", "Workload", "Container"],
         "ConfigMaps": ["Namespace", "ConfigMap", "Key"],
         "Secrets": ["Namespace", "Secret", "Key"],
@@ -1831,7 +1779,6 @@ def _resource_comparison_rows(source_rows, destination_rows, resource_name):
         "Volumes": ["Namespace", "Workload Type", "Workload", "Volume"],
         "PVC": ["Namespace", "PVC"],
     }
-
     return compare_rows(
         source_rows or [],
         destination_rows or [],
@@ -1879,21 +1826,10 @@ def _add_resource_summary_sheet(
     selected_namespaces,
     metrics,
 ):
-    """
-    Create the Summary sheet.
-
-    IMPORTANT:
-      - Summary intentionally contains ONLY Images and ConfigMaps.
-      - Exactly one row is written for each of those resources.
-      - All values are formula-driven from the hidden Namespace Metrics sheet.
-      - The namespace dropdown changes the KPIs and table for that namespace.
-    """
+    """Create a formula-driven Summary that changes with the namespace dropdown."""
     ws = workbook.create_sheet("Summary")
     styles = _excel_styles()
 
-    # ------------------------------------------------------------
-    # TITLE
-    # ------------------------------------------------------------
     _add_title(
         ws,
         "Cluster Comparison Report",
@@ -1901,292 +1837,150 @@ def _add_resource_summary_sheet(
         9,
     )
 
-    # ------------------------------------------------------------
-    # ENVIRONMENT / NAMESPACE
-    # ------------------------------------------------------------
-    ws["A4"] = "Source Environment"
-    ws["A4"].font = Font(bold=True, color="1F4E78")
-    ws["A4"].fill = PatternFill("solid", fgColor="D9EAF7")
-    ws["A4"].border = styles["border"]
+    # Environment information.
+    for row, label, value in [
+        (4, "Source Environment", source_env),
+        (5, "Namespace Filter", None),
+    ]:
+        ws.cell(row, 1, label)
+        ws.cell(row, 1).font = Font(bold=True, color="1F4E78")
+        ws.cell(row, 1).fill = PatternFill("solid", fgColor="D9EAF7")
+        ws.cell(row, 1).border = styles["border"]
+        if value is not None:
+            ws.cell(row, 2, value)
+            ws.cell(row, 2).fill = PatternFill("solid", fgColor="F7FBFF")
+            ws.cell(row, 2).border = styles["border"]
 
-    ws["B4"] = source_env
-    ws["B4"].fill = PatternFill("solid", fgColor="F7FBFF")
-    ws["B4"].border = styles["border"]
+    ws["B5"] = sorted({str(n) for n in selected_namespaces}, key=str.lower)[0] if selected_namespaces else "ALL SELECTED"
 
-    ws["A5"] = "Namespace Filter"
-    ws["A5"].font = Font(bold=True, color="1F4E78")
-    ws["A5"].fill = PatternFill("solid", fgColor="D9EAF7")
-    ws["A5"].border = styles["border"]
-
-    report_namespaces = sorted(
-        {str(n).strip() for n in (selected_namespaces or []) if str(n).strip()},
-        key=str.lower,
-    )
-
-    ws["B5"] = report_namespaces[0] if report_namespaces else "ALL SELECTED"
-    ws["B5"].font = Font(bold=True, color="1F4E78")
-    ws["B5"].fill = PatternFill("solid", fgColor="EAF2F8")
-    ws["B5"].border = styles["border"]
-
-    # ------------------------------------------------------------
-    # TOP KPI CARDS
-    # ------------------------------------------------------------
+    # KPI cards use formulas against the hidden Namespace Metrics sheet.
     kpis = [
-        ("TOTAL COMPARED", "TOTAL", "F7FBFF"),
-        ("MATCHING", "SAME", "E2F0D9"),
-        ("DIFFERENT", "DIFF", "FCE4D6"),
-        ("MISSING", "MISSING", "FFF2CC"),
-        ("DESTINATION ONLY", "DESTINATION ONLY", "DDEBF7"),
+        ("TOTAL COMPARED", "C", "F7FBFF"),
+        ("MATCHING", "E", "E2F0D9"),
+        ("DIFFERENT", "F", "FCE4D6"),
+        ("MISSING", "G", "FFF2CC"),
+        ("DESTINATION ONLY", "H", "DDEBF7"),
     ]
 
-    def summary_formula(metric_column):
-        if metric_column == "TOTAL":
-            expression = (
-                "SUMIFS('Namespace Metrics'!$C:$C,'Namespace Metrics'!$B:$B,\"Images\")+"
-                "SUMIFS('Namespace Metrics'!$C:$C,'Namespace Metrics'!$B:$B,\"ConfigMaps\")"
-            )
-            selected_expression = (
-                "SUMIFS('Namespace Metrics'!$C:$C,'Namespace Metrics'!$A:$A,$B$5,"
-                "'Namespace Metrics'!$B:$B,\"Images\")+"
-                "SUMIFS('Namespace Metrics'!$C:$C,'Namespace Metrics'!$A:$A,$B$5,"
-                "'Namespace Metrics'!$B:$B,\"ConfigMaps\")"
-            )
-        else:
-            column_map = {
-                "SAME": "E",
-                "DIFF": "F",
-                "MISSING": "G",
-                "DESTINATION ONLY": "H",
-            }
-            col = column_map[metric_column]
-            expression = (
-                f"SUMIFS('Namespace Metrics'!${col}:${col},"
-                f"'Namespace Metrics'!$B:$B,\"Images\")+"
-                f"SUMIFS('Namespace Metrics'!${col}:${col},"
-                f"'Namespace Metrics'!$B:$B,\"ConfigMaps\")"
-            )
-            selected_expression = (
-                f"SUMIFS('Namespace Metrics'!${col}:${col},"
-                f"'Namespace Metrics'!$A:$A,$B$5,"
-                f"'Namespace Metrics'!$B:$B,\"Images\")+"
-                f"SUMIFS('Namespace Metrics'!${col}:${col},"
-                f"'Namespace Metrics'!$A:$A,$B$5,"
-                f"'Namespace Metrics'!$B:$B,\"ConfigMaps\")"
-            )
-
-        return f'=IF($B$5="ALL SELECTED",{expression},{selected_expression})'
-
-    for col, (label, metric, fill) in enumerate(kpis, start=4):
+    for col, (label, metric_col, fill) in enumerate(kpis, start=4):
         _add_kpi(ws, 4, col, label, 0, fill=fill)
-        ws.cell(5, col).value = summary_formula(metric)
+        value_cell = ws.cell(5, col)
+        if metric_col == "C":
+            formula = '=IF($B$5="ALL SELECTED",SUM(\'Namespace Metrics\'!$C:$C),SUMIFS(\'Namespace Metrics\'!$C:$C,\'Namespace Metrics\'!$A:$A,$B$5))'
+        else:
+            formula = f'=IF($B$5="ALL SELECTED",SUM(\'Namespace Metrics\'!${metric_col}:${metric_col}),SUMIFS(\'Namespace Metrics\'!${metric_col}:${metric_col},\'Namespace Metrics\'!$A:$A,$B$5))'
+        value_cell.value = formula
 
-    # ------------------------------------------------------------
-    # PERCENTAGE KPI CARDS
-    # ------------------------------------------------------------
+    # Percent KPI row.
     percent_kpis = [
-        ("OVERALL MATCH %", '=IF(D5=0,1,E5/(E5+F5+G5+H5))', "E2F0D9"),
-        ("OVERALL DIFFERENCE %", '=IF(D5=0,0,1-E5/(E5+F5+G5+H5))', "FCE4D6"),
-        ("MISSING %", '=IF(D5=0,0,G5/(E5+F5+G5+H5))', "FFF2CC"),
-        ("DIFF %", '=IF(D5=0,0,F5/(E5+F5+G5+H5))', "FCE4D6"),
-        ("DEST ONLY %", '=IF(D5=0,0,H5/(E5+F5+G5+H5))', "DDEBF7"),
+        ("OVERALL MATCH %", "=IF(D5=0,1,E5/D5)", "E2F0D9"),
+        ("OVERALL DIFFERENCE %", "=IF(D5=0,0,1-E5/D5)", "FCE4D6"),
+        ("MISSING %", "=IF(D5=0,0,G5/D5)", "FFF2CC"),
+        ("DIFF %", "=IF(D5=0,0,F5/D5)", "FCE4D6"),
+        ("DEST ONLY %", "=IF(D5=0,0,H5/D5)", "DDEBF7"),
     ]
-
     for col, (label, formula, fill) in enumerate(percent_kpis, start=4):
         _add_kpi(ws, 7, col, label, formula, "0.00%", fill)
 
-    # ------------------------------------------------------------
-    # INSTRUCTION
-    # ------------------------------------------------------------
+    ws["A7"] = ws["A7"].value  # preserve merged instruction replacement below
+    # Remove accidental overlap from the title helper; create instruction in row 9.
     ws["A9"] = (
-        "Select a namespace in the dropdown above. This Summary considers ONLY "
-        "Images and ConfigMaps. Use ALL SELECTED to view the aggregate of the "
-        "namespaces selected during report generation."
+        "Select a namespace in the dropdown above. The report below is calculated "
+        "only for that namespace. Use ALL SELECTED to see the aggregate of the namespaces selected when generating the report."
     )
     ws.merge_cells("A9:I9")
     ws["A9"].font = Font(italic=True, color="666666")
-    ws["A9"].alignment = Alignment(wrap_text=True, vertical="center")
-    ws.row_dimensions[9].height = 30
+    ws["A9"].alignment = Alignment(wrap_text=True)
+    ws.row_dimensions[9].height = 28
 
-    # ------------------------------------------------------------
-    # SUMMARY TABLE
-    # ------------------------------------------------------------
+    # Resource table.
     header_row = 11
     headers = [
-        "Resource",
-        "Source Count",
-        "Destination Count",
-        "Same",
-        "Different",
-        "Missing in Destination",
-        "Destination Only",
-        "Match %",
-        "Difference %",
+        "Resource", "Source Count", "Destination Count", "Same", "Different",
+        "Missing in Destination", "Destination Only", "Match %", "Difference %",
     ]
+    for col, header in enumerate(headers, 1):
+        c = ws.cell(header_row, col, header)
+        c.fill = styles["header_fill"]
+        c.font = styles["header_font"]
+        c.border = styles["border"]
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[header_row].height = 38
 
-    for col, header in enumerate(headers, start=1):
-        cell = ws.cell(header_row, col, header)
-        cell.fill = styles["header_fill"]
-        cell.font = styles["header_font"]
-        cell.border = styles["border"]
-        cell.alignment = Alignment(
-            horizontal="center",
-            vertical="center",
-            wrap_text=True,
-        )
+    metrics_first = 2
+    metrics_last = len(metrics) + 1
+    selected_resource_list = list(selected_resources)
 
-    ws.row_dimensions[header_row].height = 40
-
-    # Clear any accidental/stale cells in the table area before writing.
-    # This guarantees the Summary can never retain duplicate resource rows.
-    for row_idx in range(header_row + 1, header_row + 20):
-        for col_idx in range(1, 10):
-            ws.cell(row_idx, col_idx).value = None
-            ws.cell(row_idx, col_idx).fill = PatternFill(fill_type=None)
-            ws.cell(row_idx, col_idx).border = Border()
-
-    # Always write EXACTLY these two rows, regardless of the resource
-    # multiselect/session-state contents.
-    summary_resources = ["Images", "ConfigMaps"]
-
-    for offset, resource in enumerate(summary_resources, start=1):
-        row_no = header_row + offset
+    for row_no, resource in enumerate(selected_resource_list, start=header_row + 1):
         ws.cell(row_no, 1, resource)
+        # Source / destination counts.
+        for col, metric_col in [(2, "C"), (3, "D"), (4, "E"), (5, "F"), (6, "G"), (7, "H")]:
+            if metric_col == "C":
+                formula = f'=IF($B$5="ALL SELECTED",SUMIFS(\'Namespace Metrics\'!$C:$C,\'Namespace Metrics\'!$B:$B,$A{row_no}),SUMIFS(\'Namespace Metrics\'!$C:$C,\'Namespace Metrics\'!$A:$A,$B$5,\'Namespace Metrics\'!$B:$B,$A{row_no}))'
+            elif metric_col == "D":
+                formula = f'=IF($B$5="ALL SELECTED",SUMIFS(\'Namespace Metrics\'!$D:$D,\'Namespace Metrics\'!$B:$B,$A{row_no}),SUMIFS(\'Namespace Metrics\'!$D:$D,\'Namespace Metrics\'!$A:$A,$B$5,\'Namespace Metrics\'!$B:$B,$A{row_no}))'
+            else:
+                formula = f'=IF($B$5="ALL SELECTED",SUMIFS(\'Namespace Metrics\'!${metric_col}:${metric_col},\'Namespace Metrics\'!$B:$B,$A{row_no}),SUMIFS(\'Namespace Metrics\'!${metric_col}:${metric_col},\'Namespace Metrics\'!$A:$A,$B$5,\'Namespace Metrics\'!$B:$B,$A{row_no}))'
+            ws.cell(row_no, col, formula)
+        ws.cell(row_no, 8, f'=IF(B{row_no}+C{row_no}=0,1,D{row_no}/(D{row_no}+E{row_no}+F{row_no}+G{row_no}))')
+        ws.cell(row_no, 9, f'=IF(B{row_no}+C{row_no}=0,0,1-H{row_no})')
 
-        # Namespace Metrics columns:
-        # C = Source Count
-        # D = Destination Count
-        # E = Same
-        # F = Different
-        # G = Missing
-        # H = Destination Only
-        for col_no, metric_col in zip(
-            range(2, 8),
-            ["C", "D", "E", "F", "G", "H"],
-        ):
-            formula = (
-                f'=IF($B$5="ALL SELECTED",'
-                f'SUMIFS(\'Namespace Metrics\'!${metric_col}:${metric_col},'
-                f'\'Namespace Metrics\'!$B:$B,$A{row_no}),'
-                f'SUMIFS(\'Namespace Metrics\'!${metric_col}:${metric_col},'
-                f'\'Namespace Metrics\'!$A:$A,$B$5,'
-                f'\'Namespace Metrics\'!$B:$B,$A{row_no}))'
-            )
-            ws.cell(row_no, col_no, formula)
-
-        # Match % = Same / total comparison rows.
-        ws.cell(
-            row_no,
-            8,
-            f'=IF(D{row_no}+E{row_no}+F{row_no}+G{row_no}=0,1,'
-            f'D{row_no}/(D{row_no}+E{row_no}+F{row_no}+G{row_no}))',
-        )
-
-        # Difference % = 1 - Match %.
-        ws.cell(row_no, 9, f"=1-H{row_no}")
-
-        for col_no in range(1, 10):
-            cell = ws.cell(row_no, col_no)
-            cell.border = styles["border"]
-            cell.alignment = Alignment(
-                horizontal="center" if col_no > 1 else "left",
-                vertical="center",
-                wrap_text=True,
-            )
-            if offset % 2 == 0:
-                cell.fill = PatternFill("solid", fgColor="F8FBFF")
-
+        for col in range(1, 10):
+            c = ws.cell(row_no, col)
+            c.border = styles["border"]
+            c.alignment = Alignment(horizontal="center" if col > 1 else "left", vertical="center", wrap_text=True)
+            if row_no % 2 == 0:
+                c.fill = PatternFill("solid", fgColor="F8FBFF")
         ws.cell(row_no, 8).number_format = "0.00%"
         ws.cell(row_no, 9).number_format = "0.00%"
-
-        # Status-style colors for the four comparison columns.
         _apply_status(ws.cell(row_no, 4), "SAME", styles)
         _apply_status(ws.cell(row_no, 5), "DIFF", styles)
         _apply_status(ws.cell(row_no, 6), "MISSING", styles)
         _apply_status(ws.cell(row_no, 7), "DESTINATION ONLY", styles)
 
-    # Overall row is ALWAYS row 14 because there are exactly two resources.
-    overall_row = header_row + 3
+    overall_row = header_row + 1 + len(selected_resource_list)
     ws.cell(overall_row, 1, "OVERALL")
-
-    for col_no in range(2, 8):
-        letter = get_column_letter(col_no)
-        ws.cell(
-            overall_row,
-            col_no,
-            f"=SUM({letter}{header_row + 1}:{letter}{header_row + 2})",
-        )
-
-    ws.cell(
-        overall_row,
-        8,
-        f'=IF(D{overall_row}+E{overall_row}+F{overall_row}+G{overall_row}=0,'
-        f'1,D{overall_row}/(D{overall_row}+E{overall_row}+F{overall_row}+G{overall_row}))',
-    )
-    ws.cell(overall_row, 9, f"=1-H{overall_row}")
-
-    for col_no in range(1, 10):
-        cell = ws.cell(overall_row, col_no)
-        cell.fill = PatternFill("solid", fgColor="EAF2F8")
-        cell.font = Font(bold=True, color="1F4E78")
-        cell.border = styles["border"]
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-
+    for col in range(2, 8):
+        letter = get_column_letter(col)
+        ws.cell(overall_row, col, f"=SUM({letter}{header_row+1}:{letter}{overall_row-1})")
+    ws.cell(overall_row, 8, f'=IF(D{overall_row}+E{overall_row}+F{overall_row}+G{overall_row}=0,1,D{overall_row}/(D{overall_row}+E{overall_row}+F{overall_row}+G{overall_row}))')
+    ws.cell(overall_row, 9, f'=1-H{overall_row}')
+    for col in range(1, 10):
+        c = ws.cell(overall_row, col)
+        c.fill = PatternFill("solid", fgColor="EAF2F8")
+        c.font = Font(bold=True, color="1F4E78")
+        c.border = styles["border"]
+        c.alignment = Alignment(horizontal="center", vertical="center")
     ws.cell(overall_row, 8).number_format = "0.00%"
     ws.cell(overall_row, 9).number_format = "0.00%"
-    ws.row_dimensions[overall_row].height = 24
 
-    # ------------------------------------------------------------
-    # ACTION REQUIRED
-    # ------------------------------------------------------------
+    # Action required.
     action_row = overall_row + 3
     ws.cell(action_row, 1, "ACTION REQUIRED")
-    ws.merge_cells(
-        start_row=action_row,
-        start_column=1,
-        end_row=action_row,
-        end_column=9,
-    )
     ws.cell(action_row, 1).fill = PatternFill("solid", fgColor="1F4E78")
     ws.cell(action_row, 1).font = Font(bold=True, color="FFFFFF", size=12)
-
+    ws.merge_cells(start_row=action_row, start_column=1, end_row=action_row, end_column=9)
     action_formulas = [
         f'=F{overall_row}&" resource(s) are present in {source_env} but missing in {destination_env}."',
         f'=E{overall_row}&" resource(s) exist in both environments but have configuration/value differences."',
         f'=G{overall_row}&" resource(s) exist only in {destination_env}."',
         '="Review the Missing and Different counts in the Summary for reconciliation."',
     ]
+    for i, formula in enumerate(action_formulas, start=action_row + 1):
+        ws.merge_cells(start_row=i, start_column=1, end_row=i, end_column=9)
+        ws.cell(i, 1, "• " + formula)
+        # Formula needs to be the whole cell value; remove the bullet from formula cells.
+        ws.cell(i, 1, formula)
+        ws.cell(i, 1).alignment = Alignment(wrap_text=True, vertical="top")
+        ws.cell(i, 1).border = styles["border"]
+        ws.row_dimensions[i].height = 24
 
-    for index, formula in enumerate(action_formulas, start=action_row + 1):
-        ws.merge_cells(
-            start_row=index,
-            start_column=1,
-            end_row=index,
-            end_column=9,
-        )
-        ws.cell(index, 1, formula)
-        ws.cell(index, 1).alignment = Alignment(
-            wrap_text=True,
-            vertical="top",
-        )
-        ws.cell(index, 1).border = styles["border"]
-        ws.row_dimensions[index].height = 24
+    # Namespace dropdown only includes namespaces selected for this report.
+    _add_namespace_dropdown(workbook, selected_namespaces, summary_cell="B5")
 
-    # ------------------------------------------------------------
-    # NAMESPACE DROPDOWN
-    # ------------------------------------------------------------
-    _add_namespace_dropdown(
-        workbook,
-        report_namespaces,
-        summary_cell="B5",
-    )
-
-    # ------------------------------------------------------------
-    # FINAL FORMATTING
-    # ------------------------------------------------------------
     widths = [30, 16, 20, 12, 14, 22, 20, 14, 16]
-    for idx, width in enumerate(widths, start=1):
+    for idx, width in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(idx)].width = width
-
     ws.freeze_panes = "A12"
     ws.sheet_view.showGridLines = False
     ws.sheet_properties.pageSetUpPr.fitToPage = True
@@ -2194,101 +1988,6 @@ def _add_resource_summary_sheet(
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.print_title_rows = "1:11"
-
-    return ws
-
-def _add_deployment_comparison_sheet(workbook, source_rows, destination_rows):
-    """Create Workloads sheet using only deployment names."""
-    if "Workloads" in workbook.sheetnames:
-        del workbook["Workloads"]
-
-    ws = workbook.create_sheet("Workloads")
-    styles = _excel_styles()
-
-    headers = [
-        "Namespace",
-        "Deployment Name",
-        "Deployment Name Source",
-        "Deployment Name Destination",
-        "Status",
-    ]
-    ws.append(headers)
-
-    source = {}
-    destination = {}
-
-    for row in source_rows or []:
-        if str(row.get("Workload Type", "")).strip().lower() != "deployment":
-            continue
-        ns = str(row.get("Namespace", "") or "").strip()
-        name = str(row.get("Workload", "") or "").strip()
-        if name:
-            source.setdefault(ns, set()).add(name)
-
-    for row in destination_rows or []:
-        if str(row.get("Workload Type", "")).strip().lower() != "deployment":
-            continue
-        ns = str(row.get("Namespace", "") or "").strip()
-        name = str(row.get("Workload", "") or "").strip()
-        if name:
-            destination.setdefault(ns, set()).add(name)
-
-    for ns in sorted(set(source) | set(destination), key=str.lower):
-        names = sorted(
-            source.get(ns, set()) | destination.get(ns, set()),
-            key=str.lower,
-        )
-        for name in names:
-            in_source = name in source.get(ns, set())
-            in_destination = name in destination.get(ns, set())
-
-            if in_source and in_destination:
-                status = "SAME"
-            elif in_source:
-                status = "MISSING"
-            else:
-                status = "DESTINATION ONLY"
-
-            ws.append([
-                ns,
-                name,
-                name if in_source else "",
-                name if in_destination else "",
-                status,
-            ])
-
-    for cell in ws[1]:
-        cell.fill = styles["header_fill"]
-        cell.font = styles["header_font"]
-        cell.border = styles["border"]
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-    ws.row_dimensions[1].height = 34
-
-    for r in range(2, ws.max_row + 1):
-        for c in ws[r]:
-            c.border = styles["border"]
-            c.alignment = Alignment(vertical="top", wrap_text=True)
-        if r % 2 == 0:
-            for c in ws[r]:
-                c.fill = PatternFill("solid", fgColor="F8FBFF")
-        _apply_status(ws.cell(r, 5), ws.cell(r, 5).value, styles)
-
-    if ws.max_row >= 2:
-        ws.auto_filter.ref = ws.dimensions
-
-    ws.freeze_panes = "A2"
-    ws.sheet_view.showGridLines = False
-    ws.column_dimensions["A"].width = 28
-    ws.column_dimensions["B"].width = 40
-    ws.column_dimensions["C"].width = 40
-    ws.column_dimensions["D"].width = 42
-    ws.column_dimensions["E"].width = 24
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.print_title_rows = "1:1"
     return ws
 
 def _add_action_sheet(workbook, name, rows, title, description):
@@ -2450,11 +2149,16 @@ def _add_missing_in_destination_sheet(workbook, comparison, selected_resources):
                 )
 
             elif resource == "Workloads":
-                # Workloads are represented only by Deployment name.
-                resource_name = str(
-                    row.get("Deployment Name", "") or ""
+                workload_type = str(row.get("Workload Type", "") or "")
+                workload = str(row.get("Workload", "") or "")
+                container = str(row.get("Container", "") or "")
+
+                resource_name = (
+                    f"{workload_type}/{workload}"
+                    if workload_type and workload
+                    else workload
                 )
-                details = ""
+                details = f"Container: {container}" if container else ""
 
             elif resource == "ConfigMaps":
                 resource_name = str(row.get("ConfigMap", "") or "")
@@ -2604,7 +2308,7 @@ def generate_excel(
     destination_namespaces=None,
 ):
     selected_resources = list(selected_resources or [
-        "Workloads", "Images", "ConfigMaps", "Secrets", "Ingress", "Volumes", "PVC"
+        "Images", "ConfigMaps", "Secrets", "Ingress", "Volumes", "PVC"
     ])
 
     workbook = openpyxl.Workbook()
@@ -2614,18 +2318,9 @@ def generate_excel(
     # BUILD COMPARISON DATA FIRST
     # --------------------------------------------------------
     comparison = {}
-    if "Workloads" in selected_resources:
-        # Compare ONLY Deployment names. The actual Workloads sheet is created
-        # later, after Summary, so the worksheet order is Summary -> Workloads.
+    if "Workloads" in selected_resources or "Images" in selected_resources:
         comparison["Workloads"] = _resource_comparison_rows(
-            source.get("workloads", []),
-            destination.get("workloads", []),
-            "Workloads",
-        )
-
-    if "Images" in selected_resources:
-        comparison["Images"] = _resource_comparison_rows(
-            source.get("workloads", []), destination.get("workloads", []), "Images"
+            source.get("workloads", []), destination.get("workloads", []), "Workloads"
         )
     if "ConfigMaps" in selected_resources:
         comparison["ConfigMaps"] = _resource_comparison_rows(
@@ -2684,15 +2379,11 @@ def generate_excel(
     # DETAIL SHEETS
     # --------------------------------------------------------
     if "Workloads" in selected_resources:
-        _add_deployment_comparison_sheet(
-            workbook,
-            source.get("workloads", []),
-            destination.get("workloads", []),
-        )
+        add_sheet(workbook, "Workloads", comparison["Workloads"])
 
     if "Images" in selected_resources:
         image_rows = []
-        for row in comparison.get("Images", []):
+        for row in comparison.get("Workloads", []):
             image_rows.append({
                 "Namespace": row.get("Namespace", ""),
                 "Workload Type": row.get("Workload Type", ""),
@@ -3420,7 +3111,6 @@ def render_cluster_comparison_report():
     selected_resources = st.multiselect(
         "Select resources",
         [
-            "Workloads",
             "Images",
             "ConfigMaps",
             "Secrets",
@@ -3429,7 +3119,6 @@ def render_cluster_comparison_report():
             "PVC",
         ],
         default=[
-            "Workloads",
             "Images",
             "ConfigMaps",
             "Secrets",

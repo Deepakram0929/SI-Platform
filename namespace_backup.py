@@ -25,6 +25,7 @@ def load_kubeconfig(uploaded_file):
         kubeconfig_path = tmp.name
 
     try:
+
         config.load_kube_config(
             config_file=kubeconfig_path
         )
@@ -32,8 +33,10 @@ def load_kubeconfig(uploaded_file):
         return client.ApiClient()
 
     finally:
+
         try:
             os.unlink(kubeconfig_path)
+
         except Exception:
             pass
 
@@ -338,7 +341,6 @@ def create_namespace_backup(
         )
     )
 
-
     def selector_matches_pod(
         selector,
         pod_labels,
@@ -357,12 +359,10 @@ def create_namespace_backup(
 
         return True
 
-
     # Get all pods in namespace once
     pods = core_api.list_namespaced_pod(
         namespace
     )
-
 
     for service in services.items:
 
@@ -385,7 +385,6 @@ def create_namespace_backup(
             service_data
         )
 
-
         # ----------------------------------------------------
         # SERVICE SELECTOR
         # ----------------------------------------------------
@@ -395,16 +394,13 @@ def create_namespace_backup(
             or {}
         )
 
-
         image_lines = []
 
         image_lines.append(
             f"Service: {service_name}"
         )
 
-        image_lines.append(
-            ""
-        )
+        image_lines.append("")
 
         if selector:
 
@@ -419,7 +415,6 @@ def create_namespace_backup(
                 )
 
             image_lines.append("")
-
 
         # ----------------------------------------------------
         # FIND PODS BEHIND SERVICE
@@ -442,7 +437,6 @@ def create_namespace_backup(
                 matched_pods.append(
                     pod
                 )
-
 
         # ----------------------------------------------------
         # GET IMAGES
@@ -481,7 +475,6 @@ def create_namespace_backup(
 
                     image_lines.append("")
 
-
                 # --------------------------------------------
                 # INIT CONTAINERS
                 # --------------------------------------------
@@ -505,16 +498,13 @@ def create_namespace_backup(
                     "-" * 70
                 )
 
+        # ----------------------------------------------------
+        # SERVICE IMAGES FILE
+        # ----------------------------------------------------
 
-    # ----------------------------------------------------
-    # SERVICE IMAGES FILE
-    # ----------------------------------------------------
-
-    backup[
-        f"services/{service_name}/images.txt"
-    ] = "\n".join(
-        image_lines
-    )
+        backup[
+            f"services/{service_name}/images.txt"
+        ] = "\n".join(image_lines)
 
     # --------------------------------------------------------
     # SUMMARY
@@ -578,6 +568,38 @@ def create_zip(backup):
     buffer.seek(0)
 
     return buffer.getvalue()
+
+
+# ============================================================
+# NAMESPACE SELECTION CALLBACKS
+# ============================================================
+
+def select_all_backup_namespaces(namespace_names):
+
+    """
+    Select all namespaces.
+
+    This callback runs before Streamlit reruns the page,
+    so modifying the widget state here is safe.
+    """
+
+    st.session_state[
+        "backup_namespace_selector"
+    ] = list(namespace_names)
+
+
+def clear_backup_namespaces():
+
+    """
+    Clear namespace selection.
+
+    This callback runs before Streamlit reruns the page,
+    so modifying the widget state here is safe.
+    """
+
+    st.session_state[
+        "backup_namespace_selector"
+    ] = []
 
 
 # ============================================================
@@ -677,17 +699,135 @@ def render_namespace_backup():
 
         return
 
+    if not namespace_names:
+
+        st.warning(
+            "No namespaces found in the Kubernetes cluster."
+        )
+
+        return
+
     # ========================================================
-    # NAMESPACE
+    # NAMESPACE SCOPE
     # ========================================================
 
-    selected_namespace = st.selectbox(
-        "Select Namespace",
-        namespace_names,
-        key="backup_namespace"
+    st.markdown(
+        "### Select scope"
     )
 
+    scope = st.radio(
+        "Select scope",
+        [
+            "Selected Namespace",
+            "All Namespaces"
+        ],
+        horizontal=True,
+        key="backup_namespace_scope",
+        label_visibility="collapsed"
+    )
+
+    # ========================================================
+    # NAMESPACE SESSION STATE
+    # ========================================================
+
+    if (
+        "backup_namespace_selector"
+        not in st.session_state
+    ):
+
+        st.session_state[
+            "backup_namespace_selector"
+        ] = []
+
+    # Remove namespaces that no longer exist
+    # in the currently connected cluster.
+
+    valid_selection = [
+        ns
+        for ns in st.session_state[
+            "backup_namespace_selector"
+        ]
+        if ns in namespace_names
+    ]
+
+    if (
+        valid_selection
+        != st.session_state[
+            "backup_namespace_selector"
+        ]
+    ):
+
+        st.session_state[
+            "backup_namespace_selector"
+        ] = valid_selection
+
+    # ========================================================
+    # SELECTED NAMESPACE MODE
+    # ========================================================
+
+    if scope == "Selected Namespace":
+
+        st.markdown(
+            "**Select Namespace(s)**"
+        )
+
+        selected_namespaces = st.multiselect(
+            "Select Namespace(s)",
+            options=namespace_names,
+            key="backup_namespace_selector",
+            placeholder="Select one or more namespaces...",
+            label_visibility="collapsed"
+        )
+
+        c1, c2 = st.columns(2)
+
+        # ----------------------------------------------------
+        # SELECT ALL
+        # ----------------------------------------------------
+
+        with c1:
+
+            st.button(
+                "Select All Listed Namespaces",
+                use_container_width=True,
+                key="select_all_backup_namespaces",
+                on_click=select_all_backup_namespaces,
+                args=(namespace_names,)
+            )
+
+        # ----------------------------------------------------
+        # CLEAR
+        # ----------------------------------------------------
+
+        with c2:
+
+            st.button(
+                "Clear Namespace Selection",
+                use_container_width=True,
+                key="clear_backup_namespaces",
+                on_click=clear_backup_namespaces
+            )
+
+    # ========================================================
+    # ALL NAMESPACES MODE
+    # ========================================================
+
+    else:
+
+        selected_namespaces = list(
+            namespace_names
+        )
+
+        st.success(
+            f"All namespaces selected "
+            f"({len(selected_namespaces)})."
+        )
+
     st.divider()
+
+    # ========================================================
+    # BACKUP CONTENTS
+    # ========================================================
 
     st.markdown(
         "### 📦 Backup Contents"
@@ -696,16 +836,28 @@ def render_namespace_backup():
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        st.info("Deployments\n\nYAML + Images")
+
+        st.info(
+            "Deployments\n\nYAML + Images"
+        )
 
     with c2:
-        st.info("StatefulSets\n\nYAML + Images")
+
+        st.info(
+            "StatefulSets\n\nYAML + Images"
+        )
 
     with c3:
-        st.info("ConfigMaps + Secrets")
+
+        st.info(
+            "ConfigMaps + Secrets"
+        )
 
     with c4:
-        st.info("PVCs + Services")
+
+        st.info(
+            "PVCs + Services"
+        )
 
     st.warning(
         "⚠️ Secret YAML files contain Kubernetes encoded "
@@ -713,7 +865,34 @@ def render_namespace_backup():
     )
 
     # ========================================================
-    # BACKUP
+    # SELECTION STATUS
+    # ========================================================
+
+    if selected_namespaces:
+
+        if len(selected_namespaces) == 1:
+
+            st.caption(
+                f"1 namespace selected: "
+                f"`{selected_namespaces[0]}`"
+            )
+
+        else:
+
+            st.caption(
+                f"{len(selected_namespaces)} "
+                f"namespaces selected."
+            )
+
+    else:
+
+        st.info(
+            "Select at least one namespace "
+            "to create a backup."
+        )
+
+    # ========================================================
+    # BACKUP BUTTON
     # ========================================================
 
     if st.button(
@@ -723,58 +902,217 @@ def render_namespace_backup():
         key="create_namespace_backup"
     ):
 
-        try:
+        if not selected_namespaces:
 
-            with st.spinner(
-                f"Creating backup for "
-                f"{selected_namespace}..."
-            ):
+            st.error(
+                "Please select at least one namespace."
+            )
+
+            return
+
+        combined_backup = {}
+
+        successful_namespaces = []
+
+        failed_namespaces = []
+
+        # ====================================================
+        # PROGRESS
+        # ====================================================
+
+        progress = st.progress(
+            0,
+            text="Preparing namespace backup..."
+        )
+
+        total = len(
+            selected_namespaces
+        )
+
+        # ====================================================
+        # BACKUP EACH NAMESPACE
+        # ====================================================
+
+        for index, namespace in enumerate(
+            selected_namespaces,
+            start=1
+        ):
+
+            try:
+
+                progress.progress(
+                    (index - 1) / total,
+                    text=(
+                        f"Creating backup for namespace "
+                        f"{namespace} "
+                        f"({index}/{total})..."
+                    )
+                )
 
                 backup = create_namespace_backup(
                     api_client,
-                    selected_namespace
+                    namespace
                 )
 
-                zip_data = create_zip(
-                    backup
+                # --------------------------------------------
+                # Put each namespace under its own directory.
+                # --------------------------------------------
+
+                for filename, content in backup.items():
+
+                    combined_backup[
+                        f"{namespace}/{filename}"
+                    ] = content
+
+                successful_namespaces.append(
+                    namespace
                 )
+
+            except Exception as exc:
+
+                failed_namespaces.append(
+                    (
+                        namespace,
+                        str(exc)
+                    )
+                )
+
+        # ====================================================
+        # COMBINED SUMMARY
+        # ====================================================
+
+        combined_summary = f"""
+SI-PLATFORM NAMESPACE BACKUP
+============================
+
+Backup Time:
+{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+Requested Namespaces:
+{len(selected_namespaces)}
+
+Successful Namespaces:
+{len(successful_namespaces)}
+
+Failed Namespaces:
+{len(failed_namespaces)}
+
+Successful:
+{
+    chr(10).join(successful_namespaces)
+    if successful_namespaces
+    else "None"
+}
+
+Failed:
+{
+    chr(10).join(
+        f"{namespace}: {error}"
+        for namespace, error in failed_namespaces
+    )
+    if failed_namespaces
+    else "None"
+}
+"""
+
+        combined_backup[
+            "BACKUP-SUMMARY.txt"
+        ] = combined_summary
+
+        progress.progress(
+            1.0,
+            text="Backup completed."
+        )
+
+        # ====================================================
+        # RESULTS
+        # ====================================================
+
+        if successful_namespaces:
 
             st.success(
                 f"Backup created successfully for "
-                f"`{selected_namespace}`."
+                f"{len(successful_namespaces)} "
+                f"namespace(s)."
             )
 
-            # ------------------------------------------------
-            # SUMMARY
-            # ------------------------------------------------
-
-            st.markdown(
-                "### 📋 Backup Files"
-            )
-
-            for filename in sorted(
-                backup.keys()
-            ):
-
-                st.write(
-                    f"📄 {filename}"
-                )
-
-            st.download_button(
-                "⬇️ Download Namespace Backup ZIP",
-                data=zip_data,
-                file_name=(
-                    f"{selected_namespace}-"
-                    f"backup-"
-                    f"{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-                    f".zip"
-                ),
-                mime="application/zip",
-                use_container_width=True
-            )
-
-        except Exception as exc:
+        if failed_namespaces:
 
             st.error(
-                f"Backup failed: {exc}"
+                f"{len(failed_namespaces)} "
+                f"namespace(s) failed."
             )
+
+            for namespace, error in failed_namespaces:
+
+                st.warning(
+                    f"`{namespace}`: {error}"
+                )
+
+        if not combined_backup:
+
+            st.error(
+                "No backup data was generated."
+            )
+
+            return
+
+        # ====================================================
+        # CREATE ZIP
+        # ====================================================
+
+        zip_data = create_zip(
+            combined_backup
+        )
+
+        # ====================================================
+        # BACKUP FILES
+        # ====================================================
+
+        st.markdown(
+            "### 📋 Backup Files"
+        )
+
+        for filename in sorted(
+            combined_backup.keys()
+        ):
+
+            st.write(
+                f"📄 {filename}"
+            )
+
+        # ====================================================
+        # DOWNLOAD NAME
+        # ====================================================
+
+        timestamp = datetime.now().strftime(
+            "%Y%m%d-%H%M%S"
+        )
+
+        if len(successful_namespaces) == 1:
+
+            backup_name = (
+                f"{successful_namespaces[0]}-"
+                f"backup-"
+                f"{timestamp}.zip"
+            )
+
+        else:
+
+            backup_name = (
+                f"namespaces-backup-"
+                f"{timestamp}.zip"
+            )
+
+        # ====================================================
+        # DOWNLOAD
+        # ====================================================
+
+        st.download_button(
+            "⬇️ Download Namespace Backup ZIP",
+            data=zip_data,
+            file_name=backup_name,
+            mime="application/zip",
+            use_container_width=True,
+            key="download_namespace_backup"
+        )

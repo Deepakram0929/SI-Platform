@@ -40,6 +40,7 @@ ENVIRONMENTS = [
 RESOURCE_TYPES = [
     "ConfigMap",
     "Secret",
+    "Images",
     "Deployment",
     "StatefulSet",
 ]
@@ -961,6 +962,149 @@ def get_all_workloads(
 
 
 # ============================================================
+# IMAGE RESOURCE
+# ============================================================
+
+def workload_to_image_fields(workload):
+    """Extract only container image fields from a Deployment/StatefulSet."""
+    fields = {}
+
+    spec = getattr(workload, "spec", None)
+    template = getattr(spec, "template", None) if spec else None
+    pod_spec = getattr(template, "spec", None) if template else None
+
+    if pod_spec is None:
+        return fields
+
+    for container in getattr(pod_spec, "containers", None) or []:
+        cname = normalize_value(getattr(container, "name", ""))
+        if not cname:
+            continue
+
+        fields[f"container.{cname}.image"] = normalize_value(
+            getattr(container, "image", "")
+        )
+
+    return fields
+
+
+def get_all_images(apps_api, namespace):
+    """
+    Return Deployment and StatefulSet container images in one comparison set.
+
+    Keys are:
+        Deployment::<workload-name>
+        StatefulSet::<workload-name>
+
+    This keeps Deployment and StatefulSet names unambiguous.
+    """
+    result = {}
+
+    for resource_type in ("Deployment", "StatefulSet"):
+        response = (
+            apps_api.list_namespaced_deployment(
+                namespace=namespace,
+                _request_timeout=KUBE_API_TIMEOUT,
+            )
+            if resource_type == "Deployment"
+            else apps_api.list_namespaced_stateful_set(
+                namespace=namespace,
+                _request_timeout=KUBE_API_TIMEOUT,
+            )
+        )
+
+        for item in response.items or []:
+            if not item.metadata or not item.metadata.name:
+                continue
+
+            workload_name = item.metadata.name
+            result[f"{resource_type}::{workload_name}"] = workload_to_image_fields(item)
+
+    return result
+
+
+def parse_image_resource_name(resource_name):
+    """Split the Images resource key back into workload type/name."""
+    if "::" not in resource_name:
+        raise ValueError(f"Invalid image resource name: {resource_name}")
+
+    workload_type, workload_name = resource_name.split("::", 1)
+
+    if workload_type not in ("Deployment", "StatefulSet") or not workload_name:
+        raise ValueError(f"Invalid image resource name: {resource_name}")
+
+    return workload_type, workload_name
+
+
+def patch_workload_images(
+    apps_api,
+    namespace,
+    resource_name,
+    source_data,
+    selected_keys,
+):
+    """
+    Update selected container images in an existing destination
+    Deployment or StatefulSet.
+
+    The workload itself is intentionally not created when it is missing.
+    """
+    workload_type, workload_name = parse_image_resource_name(resource_name)
+
+    image_updates = {}
+    for key in selected_keys:
+        if not key.startswith("container.") or not key.endswith(".image"):
+            continue
+        if key in source_data:
+            container_name = key[len("container."):-len(".image")]
+            if container_name:
+                image_updates[container_name] = normalize_value(source_data[key])
+
+    if not image_updates:
+        return False, "No container images selected."
+
+    containers = [
+        {"name": name, "image": image}
+        for name, image in image_updates.items()
+    ]
+
+    body = {
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": containers,
+                }
+            }
+        }
+    }
+
+    try:
+        if workload_type == "Deployment":
+            apps_api.patch_namespaced_deployment(
+                name=workload_name,
+                namespace=namespace,
+                body=body,
+                _request_timeout=KUBE_API_TIMEOUT,
+            )
+        else:
+            apps_api.patch_namespaced_stateful_set(
+                name=workload_name,
+                namespace=namespace,
+                body=body,
+                _request_timeout=KUBE_API_TIMEOUT,
+            )
+
+        return (
+            True,
+            f"Updated {len(image_updates)} container image(s) in "
+            f"{workload_type}/{workload_name}.",
+        )
+
+    except Exception as exc:
+        return False, str(exc)
+
+
+# ============================================================
 # GENERIC KEY/VALUE COMPARISON
 # ============================================================
 
@@ -1379,7 +1523,7 @@ def build_actionable_dataframe(resource_type, results, show_only_differences=Tru
                 continue
 
             can_update = (
-                resource_type in ("ConfigMap", "Secret")
+                resource_type in ("ConfigMap", "Secret", "Images")
                 and destination_exists
                 and status in ("DIFF", "MISSING")
             )
@@ -1507,7 +1651,7 @@ def render_fast_comparison_table(
                 continue
 
             can_update = (
-                resource_type in ("ConfigMap", "Secret")
+                resource_type in ("ConfigMap", "Secret", "Images")
                 and destination_exists
                 and status in ("DIFF", "MISSING")
             )
@@ -1784,6 +1928,7 @@ def get_selected_keys(
     if select_all and resource_type in (
         "ConfigMap",
         "Secret",
+        "Images",
     ):
         for item in results:
             if not item.get("destination_exists"):
@@ -1866,6 +2011,7 @@ def render_global_update_queue(
     namespace,
     resources,
     destination_api,
+    destination_apps_api,
 ):
     """Render one final global queue and allow removing unwanted updates.
 
@@ -1878,7 +2024,7 @@ def render_global_update_queue(
     # Build a flat queue from the per-resource selection dictionaries.
     queue_rows = []
     for resource_type, selected_by_resource in global_selected.items():
-        if resource_type not in ("ConfigMap", "Secret"):
+        if resource_type not in ("ConfigMap", "Secret", "Images"):
             continue
 
         resource_result = resources.get(resource_type, {})
@@ -1903,7 +2049,7 @@ def render_global_update_queue(
     st.markdown("## 🚀 Global Update Destination")
 
     st.success(
-        f"{len(queue_rows)} selected key(s) are queued for destination update."
+        f"{len(queue_rows)} selected change(s) are queued for destination update."
     )
 
     st.info(
@@ -2017,12 +2163,12 @@ def render_global_update_queue(
         return
 
     st.warning(
-        "⚠️ The following checked keys will be updated in the destination "
+        "⚠️ The following checked changes will be applied in the destination "
         "using the source values."
     )
 
     confirm = st.checkbox(
-        "I confirm that the checked ConfigMap/Secret source values should be updated in the destination.",
+        "I confirm that the checked source values/images should be applied in the destination.",
         key="ec_global_confirm",
     )
 
@@ -2074,6 +2220,14 @@ def render_global_update_queue(
                             source_data.get(name, {}),
                             keys,
                         )
+                    elif rtype == "Images":
+                        ok, message = patch_workload_images(
+                            destination_apps_api,
+                            namespace,
+                            name,
+                            source_data.get(name, {}),
+                            keys,
+                        )
                     else:
                         ok = False
                         message = f"{rtype} updates are disabled."
@@ -2102,7 +2256,7 @@ def render_global_update_queue(
             st.session_state["ec_global_selection_revision"] += 1
         else:
             st.warning(
-                f"Update completed. Successful keys: {success}. "
+                f"Update completed. Successful changes: {success}. "
                 f"Failed keys: {failed}."
             )
 
@@ -2267,6 +2421,29 @@ def scan_resource(
                 source,
                 destination,
             )
+        )
+
+        return (
+            source,
+            destination,
+            results,
+            summary,
+        )
+
+    # --------------------------------------------------------
+    # IMAGES
+    # --------------------------------------------------------
+
+    if resource_type == "Images":
+
+        source, destination = fetch_source_destination_parallel(
+            lambda: get_all_images(source_apps_api, namespace),
+            lambda: get_all_images(destination_apps_api, namespace),
+        )
+
+        results, summary = compare_key_value_resources(
+            source,
+            destination,
         )
 
         return (
@@ -2884,8 +3061,9 @@ def render_environment_comparator():
         "never automatically created or deleted. "
         "Only explicitly selected DIFF/MISSING "
         "ConfigMap or Secret keys can be updated. "
-        "Deployments and StatefulSets are "
-        "comparison-only."
+        "Images can update selected container images "
+        "in an existing destination Deployment/StatefulSet. "
+        "Missing workloads are not automatically created."
     )
 
     # ========================================================
@@ -3140,6 +3318,7 @@ def render_environment_comparator():
         if resource_type in (
             "ConfigMap",
             "Secret",
+            "Images",
         ):
 
             if show_only_differences:
@@ -3149,6 +3328,17 @@ def render_environment_comparator():
                 )
 
             st.info(
+                f"{resource_type}: "
+                "SAME means source and destination "
+                "values are identical. "
+                "DIFF means both exist but values differ. "
+                "MISSING means the source key/image does "
+                "not exist in destination. "
+                "DESTINATION ONLY means it exists only "
+                "in destination. "
+                "Images can be selected and loaded into "
+                "an existing destination workload."
+            ) if resource_type == "Images" else st.info(
                 f"{resource_type}: "
                 "SAME means source and destination "
                 "values are identical. "
@@ -3183,9 +3373,10 @@ def render_environment_comparator():
                 if field.get("status") in ("DIFF", "MISSING")
             )
 
+            label = "image(s)" if resource_type == "Images" else "key(s)"
             st.caption(
-                f"{selectable_count} DIFF/MISSING key(s) are available. "
-                "Nothing is selected by default; select only the keys you want to update."
+                f"{selectable_count} DIFF/MISSING {label} are available. "
+                "Nothing is selected by default; select only the changes you want to update."
             )
             select_all = False
 
@@ -3213,7 +3404,7 @@ def render_environment_comparator():
             )
             continue
 
-        if resource_type in ("ConfigMap", "Secret"):
+        if resource_type in ("ConfigMap", "Secret", "Images"):
             # Each resource table has its own one-click DIFF/MISSING selection
             # controls. Selections are added to one global queue below.
             render_fast_comparison_table(
@@ -3261,6 +3452,7 @@ def render_environment_comparator():
         namespace,
         resources,
         destination_api,
+        destination_apps_api,
     )
 
 
