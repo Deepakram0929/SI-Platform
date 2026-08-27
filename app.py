@@ -1,6 +1,7 @@
 import streamlit as st
 import importlib
 import sys
+from pathlib import Path
 
 
 # ============================================================
@@ -22,134 +23,70 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-
-    /* ========================================================
-       SIDEBAR
-       ======================================================== */
-
-    [data-testid="stSidebar"] {
-        background-color: #f7faff;
-        border-right: 1px solid #dbe5f3;
-    }
-
-    [data-testid="stSidebar"] .block-container {
-        padding-top: 1.2rem;
-    }
-
-
-    /* ========================================================
-       SIDEBAR BRAND
-       ======================================================== */
-
-    .sidebar-brand-title {
-        font-size: 20px;
-        font-weight: 700;
-        color: #17345f;
-        margin-bottom: 3px;
-    }
-
-    .sidebar-brand-subtitle {
-        font-size: 10px;
-        color: #7890b5;
-        letter-spacing: 1.5px;
-    }
-
-
-    /* ========================================================
-       SIDEBAR SECTION
-       ======================================================== */
-
-    .sidebar-section {
-        font-size: 10px;
-        font-weight: 700;
-        color: #7890b5;
-        letter-spacing: 2px;
-        margin-top: 20px;
-        margin-bottom: 10px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid #dbe5f3;
-    }
-
-
-    /* ========================================================
-       SIDEBAR BUTTONS
-       ======================================================== */
-
-    [data-testid="stSidebar"] .stButton > button {
-        width: 100%;
-        min-height: 44px;
-
-        border: 1px solid #d6deea;
-        border-radius: 8px;
-
-        background-color: #ffffff;
-        color: #18345e;
-
-        font-size: 14px;
-        font-weight: 600;
-
-        margin-bottom: 7px;
-    }
-
-    [data-testid="stSidebar"] .stButton > button:hover {
-        border-color: #9ab8e8;
-        background-color: #eef5ff;
-        color: #0f4da8;
-    }
-
-
-    /* ========================================================
-       MAIN CONTENT
-       ======================================================== */
-
-    .main-title {
-        font-size: 36px;
-        font-weight: 700;
-        color: #18213d;
-    }
-
-    .main-subtitle {
-        font-size: 16px;
-        color: #667085;
-        margin-bottom: 25px;
-    }
-
-    /* ========================================================
-       SI-PLATFORM HOME VISUAL THEME
-       Light blue / white background matching the home artwork
-       ======================================================== */
-
+    /* -----------------------------
+       APP / MAIN AREA
+       ----------------------------- */
     [data-testid="stAppViewContainer"] {
         background:
-            radial-gradient(circle at 52% 14%, rgba(66, 132, 255, 0.075), transparent 31%),
-            linear-gradient(135deg, #f7fbff 0%, #ffffff 52%, #f4f8ff 100%);
+            radial-gradient(circle at 52% 14%,
+                rgba(66, 132, 255, 0.075),
+                transparent 31%),
+            linear-gradient(135deg,
+                #f7fbff 0%,
+                #ffffff 52%,
+                #f4f8ff 100%);
     }
 
     [data-testid="stMain"] {
         background:
-            radial-gradient(circle at 50% 16%, rgba(62, 128, 255, 0.045), transparent 34%);
+            radial-gradient(circle at 50% 16%,
+                rgba(62, 128, 255, 0.045),
+                transparent 34%);
     }
 
+    .block-container {
+        max-width: 100%;
+        padding-top: 0.85rem !important;
+        padding-left: 1.35rem !important;
+        padding-right: 1.35rem !important;
+        padding-bottom: 2rem !important;
+    }
+
+    /* -----------------------------
+       SIDEBAR
+       ----------------------------- */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #f8fbff 0%, #f2f7ff 100%);
+        background:
+            linear-gradient(180deg,
+                #f8fbff 0%,
+                #f2f7ff 100%);
         border-right: 1px solid #dce7f5;
         box-shadow: 4px 0 18px rgba(26, 82, 155, 0.035);
     }
 
-    [data-testid="stSidebar"] .block-container {
-        padding: 0.85rem 0.65rem 1rem 0.65rem;
+    [data-testid="stSidebar"] > div:first-child {
+        width: 220px !important;
     }
 
+    [data-testid="stSidebar"] .block-container {
+        padding: 0.85rem 0.65rem 1rem 0.65rem !important;
+    }
+
+    /* -----------------------------
+       SIDEBAR BRAND
+       ----------------------------- */
     .si-sidebar-brand {
         display: flex;
         align-items: center;
         gap: 9px;
         padding: 3px 5px 4px 5px;
+        margin-bottom: 4px;
     }
 
     .si-brand-logo {
         width: 35px;
         height: 35px;
+        min-width: 35px;
         border-radius: 10px;
         display: flex;
         align-items: center;
@@ -174,6 +111,9 @@ st.markdown(
         letter-spacing: 0.2px;
     }
 
+    /* -----------------------------
+       SIDEBAR SECTION
+       ----------------------------- */
     .si-nav-section {
         margin: 17px 5px 7px 5px;
         padding-bottom: 6px;
@@ -185,23 +125,29 @@ st.markdown(
         text-transform: uppercase;
     }
 
+    /* -----------------------------
+       SIDEBAR BUTTONS
+       ----------------------------- */
     [data-testid="stSidebar"] .stButton {
         margin: 0 !important;
     }
 
     [data-testid="stSidebar"] .stButton > button {
         width: 100%;
-        min-height: 37px;
+        min-height: 34px !important;
         margin: 2px 0 !important;
-        padding: 6px 8px !important;
+        padding: 5px 8px !important;
         border: 1px solid transparent !important;
         border-radius: 8px !important;
         background: transparent !important;
         color: #29466e !important;
         box-shadow: none !important;
         text-align: left !important;
+        justify-content: flex-start !important;
         font-size: 11.5px !important;
         font-weight: 600 !important;
+        line-height: 1.2 !important;
+        white-space: normal !important;
         transition: all 0.15s ease;
     }
 
@@ -211,25 +157,30 @@ st.markdown(
         color: #075ee0 !important;
     }
 
+    /* -----------------------------
+       ACTIVE NAV ITEM
+       ----------------------------- */
     .si-nav-active {
         display: flex;
         align-items: center;
         width: 100%;
-        min-height: 37px;
+        min-height: 34px;
         box-sizing: border-box;
         margin: 2px 0;
-        padding: 6px 8px;
+        padding: 5px 8px;
         border: 1px solid #d8e7fc;
         border-radius: 8px;
         background: linear-gradient(90deg, #e9f3ff, #f2f8ff);
         color: #075ee0;
         font-size: 11.5px;
         font-weight: 700;
+        line-height: 1.2;
         box-shadow: 0 2px 8px rgba(35, 105, 220, 0.06);
     }
 
-
-    /* Compact section dropdowns */
+    /* -----------------------------
+       EXPANDERS
+       ----------------------------- */
     [data-testid="stSidebar"] [data-testid="stExpander"] {
         border: 0 !important;
         border-radius: 8px !important;
@@ -242,7 +193,7 @@ st.markdown(
         color: #4f6788 !important;
         font-size: 11px !important;
         font-weight: 800 !important;
-        letter-spacing: .9px !important;
+        letter-spacing: 0.9px !important;
         text-transform: uppercase !important;
     }
 
@@ -257,72 +208,32 @@ st.markdown(
     }
 
     [data-testid="stSidebar"] [data-testid="stExpander"] .stButton > button {
-        justify-content: flex-start !important;
-        text-align: left !important;
-        min-height: 34px !important;
+        min-height: 32px !important;
         padding: 5px 8px 5px 16px !important;
-        white-space: normal !important;
     }
 
+    /* -----------------------------
+       SIDEBAR DIVIDER
+       ----------------------------- */
     .si-sidebar-divider {
         height: 1px;
         margin: 12px 5px 3px 5px;
         background: #e0e8f4;
     }
 
-    /* ========================================================
-       LEFT-ALIGNED ACTIVITY DROPDOWN NAVIGATION
-       ======================================================== */
-
-    [data-testid="stSidebar"] .stButton > button {
-        justify-content: flex-start !important;
-        text-align: left !important;
-        white-space: normal !important;
+    /* -----------------------------
+       MOBILE / NARROW SCREEN
+       ----------------------------- */
+    @media (max-width: 900px) {
+        .block-container {
+            padding-left: 0.75rem !important;
+            padding-right: 0.75rem !important;
+        }
     }
-
-    [data-testid="stSidebar"] [data-testid="column"] .stButton > button {
-        min-height: 34px !important;
-        padding: 5px 6px !important;
-    }
-
-    /* Arrow column */
-    [data-testid="stSidebar"] [data-testid="column"]:first-child
-    .stButton > button {
-        color: #6f86a6 !important;
-        font-size: 17px !important;
-        font-weight: 700 !important;
-        text-align: center !important;
-        justify-content: center !important;
-        padding: 0 !important;
-    }
-
-    [data-testid="stSidebar"] [data-testid="column"]:first-child
-    .stButton > button:hover {
-        background: #eaf3ff !important;
-        color: #1266df !important;
-    }
-
-    /* Activity children */
-    [data-testid="stSidebar"] .stButton > button {
-        line-height: 1.2 !important;
-    }
-
-    /* Give activity items a subtle indented appearance. */
-    [data-testid="stSidebar"] .stButton > button:hover {
-        border-color: #d7e6fa !important;
-    }
-
-    .block-container {
-        padding-top: 0.85rem !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
-    }
-
     </style>
     """,
     unsafe_allow_html=True,
 )
-
 
 # ============================================================
 # SAFE MODULE LOADER
@@ -429,6 +340,16 @@ render_environment_comparator, environment_error = load_function(
 
 
 # ============================================================
+# CPU & MEMORY
+# ============================================================
+
+render_cpu_memory, cpu_memory_error = load_function(
+    "cpu_memory",
+    "render_cpu_memory"
+)
+
+
+# ============================================================
 # CLUSTER COMPARISON REPORT
 # ============================================================
 
@@ -506,39 +427,60 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+
+    # ========================================================
+    # SIDEBAR NAVIGATION FUNCTION
+    # ========================================================
+
     def sidebar_nav(label, page, key):
+
         """Existing page routing with compact left-aligned navigation."""
+
         if st.session_state.page == page:
+
             st.markdown(
                 f'<div class="si-nav-active">{label}</div>',
                 unsafe_allow_html=True,
             )
+
         else:
+
             if st.button(
                 label,
                 key=key,
                 use_container_width=True,
             ):
+
                 st.session_state.page = page
+
                 st.rerun()
+
 
     # ========================================================
     # VALIDATION & COMPARISON
-    # Keep these visible because they are the primary modules.
     # ========================================================
 
     st.markdown(
-        '<div class="si-nav-section">Validation &amp; Comparison</div>',
+        '<div class="si-nav-section">'
+        'Validation &amp; Comparison'
+        '</div>',
         unsafe_allow_html=True,
     )
 
-    sidebar_nav("⌂  Home", "Home", "nav_home")
 
     sidebar_nav(
-        "⚖  Environment Comparator",
+        "⌂  Home",
+        "Home",
+        "nav_home"
+    )
+
+
+    sidebar_nav(
+        "⚖ Environment Comparator",
         "Environment Comparator",
         "nav_environment",
     )
+
 
     sidebar_nav(
         "◇  Workload Comparator",
@@ -546,24 +488,35 @@ with st.sidebar:
         "nav_workload",
     )
 
+
     sidebar_nav(
         "▣  Image Comparator",
         "Image Comparator",
         "nav_image",
     )
 
+
     sidebar_nav(
         "📄  YAML Comparator",
         "YAML Comparator",
         "nav_yaml",
     )
+    
+    sidebar_nav(
+        "⚙  CPU & MEM Compare",
+        "CPU & Memory",
+        "nav_cpu_memory",
+    )
+
 
     # ========================================================
     # MONITORING & DIAGNOSTICS
-    # Only the SECTION is collapsible.
     # ========================================================
 
-    with st.expander("🔎  Monitoring & Diagnostics", expanded=False):
+    with st.expander(
+        "🔎  Monitoring & Diagnostics",
+        expanded=False
+    ):
 
         sidebar_nav(
             "◎  Ingress Connectivity",
@@ -571,11 +524,13 @@ with st.sidebar:
             "nav_ingress",
         )
 
+
         sidebar_nav(
             "⚙  Container Status",
             "Container Status",
             "nav_container_status",
         )
+
 
         sidebar_nav(
             "⌁  VM Connectivity",
@@ -583,18 +538,22 @@ with st.sidebar:
             "nav_vm_connectivity",
         )
 
+
         sidebar_nav(
             "🐳  Docker Image Search",
             "Docker Image Load",
             "nav_docker",
         )
 
+
     # ========================================================
     # BACKUP & OPERATIONS
-    # Only the SECTION is collapsible.
     # ========================================================
 
-    with st.expander("💾  Backup & Operations", expanded=False):
+    with st.expander(
+        "💾  Backup & Operations",
+        expanded=False
+    ):
 
         sidebar_nav(
             "⇩  Namespace Backup",
@@ -602,24 +561,33 @@ with st.sidebar:
             "nav_namespace_backup",
         )
 
+
         sidebar_nav(
             "⌘  DB String",
             "DB String",
             "nav_db_string",
         )
 
+
     # ========================================================
     # REPORTS
-    # Only the SECTION is collapsible.
     # ========================================================
 
-    with st.expander("📊  Reports", expanded=False):
+    with st.expander(
+        "📊  Reports",
+        expanded=False
+    ):
 
         sidebar_nav(
             "▣  Cluster Comparison Report",
             "Cluster Comparison Report",
             "nav_cluster_report",
         )
+
+
+    # ========================================================
+    # SIDEBAR DIVIDER
+    # ========================================================
 
     st.markdown(
         '<div class="si-sidebar-divider"></div>',
@@ -758,6 +726,41 @@ def render_yaml_comparator():
 
 
 # ============================================================
+# CPU & MEMORY
+# ============================================================
+
+elif st.session_state.page == "CPU & Memory":
+
+    if render_cpu_memory:
+
+        render_cpu_memory()
+
+    else:
+
+        st.error(
+            "CPU & Memory module cannot be loaded."
+        )
+
+        if cpu_memory_error:
+            st.code(cpu_memory_error)
+
+        st.info(
+            "Make sure cpu_memory.py contains:"
+        )
+
+        st.code(
+            """
+def render_cpu_memory():
+
+    # CPU & Memory code
+
+    pass
+            """,
+            language="python"
+        )
+
+
+# ============================================================
 # ENVIRONMENT COMPARATOR
 # ============================================================
 
@@ -784,7 +787,8 @@ elif st.session_state.page == "Environment Comparator":
             """
 def render_environment_comparator():
 
-    # UAT → PROD environment comparison and sync code
+    # UAT → PROD environment
+    # comparison and sync code
 
     pass
             """,
